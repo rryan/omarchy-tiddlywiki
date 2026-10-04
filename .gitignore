@@ -1,0 +1,8 @@
+# Connection details belong in the user's configuration, never this repository.
+tiddlywiki.json
+.env
+.env.*
+
+# Python runtime artifacts.
+__pycache__/
+*.pyc

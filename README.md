@@ -19,11 +19,11 @@ the draft. Successful saves clear the fields; drafts do not survive shell reload
 Requires Omarchy's Quickshell shell and Python 3 (standard library only).
 
 ```sh
-omarchy plugin add /path/to/tw-quickshell --enable --yes
+omarchy plugin add https://github.com/rryan/omarchy-tiddlywiki.git --enable --yes
 ```
 
-The source must be a committed Git repository. The plugin is placed in the
-right bar section; move it with `omarchy bar move rryan.tiddlywiki --section right`.
+The plugin is placed in the right bar section; move it with
+`omarchy bar move rryan.tiddlywiki --section right`.
 
 Create `~/.config/omarchy/tiddlywiki.json` (or the same path beneath
 `XDG_CONFIG_HOME`) with permissions **0600**:
