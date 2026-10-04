@@ -89,6 +89,8 @@ Item {
             anchors.fill: parent
             anchors.margins: 24
             spacing: 12
+            Shortcut { sequence: "Ctrl+Return"; enabled: root.opened && !root.saving; onActivated: root.save() }
+            Shortcut { sequence: "Escape"; enabled: root.opened; onActivated: root.dismiss() }
 
             Label {
                 text: "Create tiddler"
@@ -162,7 +164,5 @@ Item {
                 }
             }
         }
-        Shortcut { sequence: "Ctrl+Return"; enabled: root.opened && !root.saving; onActivated: root.save() }
-        Shortcut { sequence: "Escape"; enabled: root.opened; onActivated: root.dismiss() }
     }
 }
