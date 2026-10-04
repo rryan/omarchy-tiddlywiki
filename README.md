@@ -45,6 +45,17 @@ For a shortcut, add an unused key to `~/.config/hypr/bindings.lua`:
 o.bind("SUPER + SHIFT + P", "Create TiddlyWiki tiddler", "omarchy-shell shell summon rryan.tiddlywiki '{}'")
 ```
 
+For a centered hovering editor that does not rearrange tiled windows, add
+this rule to `~/.config/hypr/hyprland.lua`:
+
+```lua
+o.window({ class = "^org\\.quickshell$", title = "^Create tiddler — TiddlyWiki$" }, {
+  float = true,
+  center = true,
+  size = { 780, 620 },
+})
+```
+
 Then run `hyprctl reload` and `hyprctl configerrors`.
 
 ## Save safety
@@ -61,5 +72,6 @@ be overwritten. Choose distinct post titles. After an ambiguous network
 failure, check the wiki before retrying.
 
 The wiki needs the Markdown plugin to render `text/x-markdown` posts.
-Installation verification used read-only live requests and local-server
-save smoke checks; no test tiddlers were posted to the real wiki.
+Save smoke checks used a local server. A desktop-input smoke interaction
+accidentally created one live test tiddler; that exact tiddler was removed
+and its absence confirmed by HTTP 404. No existing posts were modified.
