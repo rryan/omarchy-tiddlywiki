@@ -14,7 +14,11 @@ Item {
     property bool opened: false
     property var _documents: []
     property var _results: []
+    property bool _indexReady: false
     property bool _indexLoading: false
+    property bool _indexRefreshing: false
+    property bool _searchPending: false
+    property string _rankedQuery: ""
     property string _indexError: ""
     property int _indexGeneration: 0
     property int _readGeneration: 0
@@ -23,10 +27,12 @@ Item {
     property bool _readerLoading: false
     property string _readerTitle: ""
     property string _readerMetadata: ""
+    property var _readerTags: []
     property string _readerHtml: ""
     property string _readerError: ""
     readonly property bool loading: _indexLoading
-    readonly property bool ranking: debounce.running
+    readonly property bool refreshing: _indexRefreshing
+    readonly property bool ranking: _searchPending
     readonly property string query: queryField.text
     readonly property int resultCount: _results.length
     readonly property int selectedIndex: results.currentIndex
@@ -36,17 +42,23 @@ Item {
     readonly property bool readerLoading: _readerLoading
     readonly property string readerTitle: _readerTitle
     readonly property string status: _indexLoading ? "Loading titles and content…"
-        : _indexError ? _indexError : ranking ? "Searching…"
+        : ranking ? "Searching…"
+        : _indexError ? (_indexReady ? "Refresh failed: " : "") + _indexError
+        : _indexRefreshing ? "Refreshing…  ·  " + resultCount + " tiddlers"
         : !resultCount ? "No matching tiddlers." : resultCount + " tiddlers"
 
     function open(payloadJson) {
         close()
-        opened = true
         _indexError = ""
-        _documents = []
-        clearResults()
         queryField.clear()
-        _indexLoading = true
+        opened = true
+        _indexLoading = !_indexReady
+        _indexRefreshing = _indexReady
+        if (_indexReady) {
+            updateResults()
+            results.currentIndex = _results.length ? 0 : -1
+            if (_results.length) results.positionViewAtIndex(0, ListView.Beginning)
+        } else clearResults()
         request("index", {})
         Qt.callLater(function() { if (root.opened) queryField.forceActiveFocus() })
     }
@@ -54,6 +66,7 @@ Item {
     function close() {
         opened = false
         debounce.stop()
+        _searchPending = false
         ++_indexGeneration
         ++_readGeneration
         if (_indexProcess) _indexProcess.running = false
@@ -61,9 +74,9 @@ Item {
         _indexProcess = null
         _readProcess = null
         _indexLoading = false
+        _indexRefreshing = false
         reader.close()
         clearReader()
-        clearResults()
     }
 
     function dismiss() {
@@ -77,36 +90,60 @@ Item {
     }
 
     function scheduleSearch() {
-        clearResults()
         debounce.stop()
-        if (opened && !_indexLoading && !_indexError) debounce.restart()
+        _searchPending = opened && _indexReady
+        if (_searchPending) debounce.restart()
     }
 
     function updateResults() {
-        results.currentIndex = -1
-        _results = SearchModel.search(_documents, queryField.text)
-        results.currentIndex = _results.length ? 0 : -1
-        if (_results.length) results.positionViewAtIndex(0, ListView.Beginning)
+        var next = SearchModel.search(_documents, queryField.text)
+        var unchanged = next.length === _results.length
+        for (var i = 0; unchanged && i < next.length; ++i) {
+            unchanged = next[i].title === _results[i].title
+                && next[i].snippet === _results[i].snippet
+        }
+        if (!unchanged) {
+            var previousTitle = _rankedQuery === queryField.text ? selectedTitle : ""
+            var nextIndex = next.length ? 0 : -1
+            for (var j = 0; previousTitle && j < next.length; ++j) {
+                if (next[j].title === previousTitle) {
+                    nextIndex = j
+                    break
+                }
+            }
+            results.currentIndex = -1
+            _results = next
+            results.currentIndex = nextIndex
+            if (nextIndex >= 0) results.positionViewAtIndex(nextIndex,
+                previousTitle ? ListView.Contain : ListView.Beginning)
+        } else if (_rankedQuery !== queryField.text && next.length) {
+            results.currentIndex = 0
+            results.positionViewAtIndex(0, ListView.Beginning)
+        }
+        _rankedQuery = queryField.text
+        _searchPending = false
     }
 
     function moveSelection(delta) {
-        if (!resultCount || ranking || loading) return
+        if (!resultCount || ranking || loading || reader.visible) return
         results.currentIndex = Math.max(0, Math.min(resultCount - 1, results.currentIndex + delta))
         results.positionViewAtIndex(results.currentIndex, ListView.Contain)
     }
 
-    function focusResults() { results.forceActiveFocus() }
+    function focusResults() { if (!reader.visible) results.forceActiveFocus() }
 
     function clearReader() {
         _readerLoading = false
         _readerTitle = ""
         _readerMetadata = ""
+        _readerTags = []
         _readerHtml = ""
         _readerError = ""
     }
 
     function openSelected() {
-        if (!selectedTitle || loading || ranking) return
+        if (!selectedTitle || loading || ranking || _rankedQuery !== queryField.text
+                || reader.visible) return
         ++_readGeneration
         if (_readProcess) _readProcess.running = false
         _readProcess = null
@@ -116,6 +153,32 @@ Item {
         reader.open()
         request("read", {title: selectedTitle})
         Qt.callLater(function() { if (reader.visible) readerText.forceActiveFocus() })
+    }
+
+    function localTimestamp(value) {
+        if (typeof value !== "string" || !/^\d{17}$/.test(value)) return ""
+        var year = Number(value.slice(0, 4))
+        var month = Number(value.slice(4, 6)) - 1
+        var day = Number(value.slice(6, 8))
+        var hour = Number(value.slice(8, 10))
+        var minute = Number(value.slice(10, 12))
+        var second = Number(value.slice(12, 14))
+        var date = new Date(0)
+        date.setUTCFullYear(year, month, day)
+        date.setUTCHours(hour, minute, second, Number(value.slice(14, 17)))
+        if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month
+                || date.getUTCDate() !== day || date.getUTCHours() !== hour
+                || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second)
+            return ""
+        return Qt.formatDateTime(date, "d MMM yyyy, HH:mm")
+    }
+
+    function readerMetadata(tiddler) {
+        var modifier = typeof tiddler.modifier === "string" ? tiddler.modifier.trim() : ""
+        var creator = typeof tiddler.creator === "string" ? tiddler.creator.trim() : ""
+        var author = modifier || creator
+        var date = localTimestamp(tiddler.modified) || localTimestamp(tiddler.created)
+        return author && date ? author + "  ·  " + date : author || date
     }
 
     function request(action, payload) {
@@ -149,7 +212,9 @@ Item {
                 return
             }
             _documents = SearchModel.prepareIndex(result.tiddlers)
+            _indexReady = true
             _indexLoading = false
+            _indexRefreshing = false
             _indexError = ""
             debounce.stop()
             updateResults()
@@ -159,20 +224,24 @@ Item {
                 return
             }
             _readerTitle = String(result.tiddler.title || _readerTitle)
-            var tags = Array.isArray(result.tiddler.tags) ? result.tiddler.tags.join(" · ") : ""
-            _readerMetadata = String(result.tiddler.type || "text/vnd.tiddlywiki")
-                + (tags ? "  |  " + tags : "")
+            _readerMetadata = readerMetadata(result.tiddler)
+            _readerTags = Array.isArray(result.tiddler.tags)
+                ? result.tiddler.tags.filter(function(tag) {
+                    return typeof tag === "string" && tag.length > 0
+                }) : []
             // Only the backend's sanitized, image-free Qt RichText is rendered.
             _readerHtml = result.html
             _readerLoading = false
+            readerScroller.contentY = readerScroller.originY
         }
     }
 
     function fail(action, message) {
         if (action === "index") {
             _indexLoading = false
+            _indexRefreshing = false
             _indexError = message
-            clearResults()
+            if (!_indexReady) clearResults()
         } else {
             _readerLoading = false
             _readerHtml = ""
@@ -208,7 +277,7 @@ Item {
         }
     }
 
-    Timer { id: debounce; interval: 85; onTriggered: root.updateResults() }
+    Timer { id: debounce; interval: 25; onTriggered: root.updateResults() }
 
     FloatingWindow {
         id: window
@@ -243,6 +312,7 @@ Item {
                     id: queryField
                     objectName: "tiddlywikiSearchQuery"
                     Layout.fillWidth: true
+                    enabled: !reader.visible
                     placeholderText: "Title, acronym, or words in content…"
                     selectByMouse: true
                     color: Color.menu.text
@@ -274,11 +344,18 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 5
                         clip: true
+                        enabled: !reader.visible
+                        flickableDirection: Flickable.VerticalFlick
+                        pixelAligned: false
                         model: root._results
                         currentIndex: -1
                         boundsBehavior: Flickable.StopAtBounds
                         keyNavigationEnabled: false
                         ScrollBar.vertical: ScrollBar {}
+                        WheelScroll {
+                            objectName: "tiddlywikiResultsWheel"
+                            scroller: results
+                        }
                         Keys.priority: Keys.BeforeItem
                         Keys.onPressed: function(event) {
                             if (event.key === Qt.Key_Backtab
@@ -302,6 +379,7 @@ Item {
                             highlighted: index === results.currentIndex
                             focusPolicy: Qt.NoFocus
                             onClicked: {
+                                if (root.loading || root.ranking || reader.visible) return
                                 results.currentIndex = index
                                 root.focusResults()
                                 root.openSelected()
@@ -408,16 +486,6 @@ Item {
                 contentItem: ColumnLayout {
                     spacing: 12
                     Label {
-                        objectName: "tiddlywikiReaderMetadata"
-                        Layout.fillWidth: true
-                        text: root._readerMetadata
-                        textFormat: Text.PlainText
-                        color: Color.menu.text
-                        opacity: 0.75
-                        visible: !!text
-                        wrapMode: Text.Wrap
-                    }
-                    Label {
                         objectName: "tiddlywikiReaderStatus"
                         Layout.fillWidth: true
                         visible: root.readerLoading || !!root._readerError
@@ -426,22 +494,105 @@ Item {
                         color: Color.menu.text
                         wrapMode: Text.Wrap
                     }
-                    ScrollView {
+                    Flickable {
+                        id: readerScroller
+                        objectName: "tiddlywikiReaderFlickable"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        TextArea {
-                            id: readerText
-                            objectName: "tiddlywikiReaderText"
-                            text: root._readerHtml
-                            textFormat: TextEdit.RichText
-                            readOnly: true
-                            selectByMouse: true
-                            persistentSelection: true
-                            wrapMode: TextEdit.Wrap
-                            color: Color.menu.text
-                            background: null
-                            // TextArea does not launch URLs; sanitized HTML contains no links or images.
+                        flickableDirection: Flickable.VerticalFlick
+                        boundsBehavior: Flickable.StopAtBounds
+                        pixelAligned: false
+                        // Mouse drags select text; touchscreen drags still flick normally.
+                        acceptedButtons: Qt.NoButton
+                        contentWidth: width
+                        contentHeight: readerContent.height
+                        ScrollBar.vertical: ScrollBar {}
+                        WheelScroll {
+                            id: readerWheel
+                            objectName: "tiddlywikiReaderWheel"
+                            scroller: readerScroller
+                        }
+                        function ensureCursorVisible() {
+                            var top = readerText.y + readerText.cursorRectangle.y
+                            var bottom = top + readerText.cursorRectangle.height
+                            var destination = contentY
+                            if (top < contentY) destination = top
+                            else if (bottom > contentY + height) destination = bottom - height
+                            if (destination !== contentY) {
+                                contentY = readerWheel.bounded(destination)
+                            }
+                        }
+                        Column {
+                            id: readerContent
+                            width: Math.max(0, readerScroller.width - 14)
+                            spacing: 16
+                            Label {
+                                objectName: "tiddlywikiReaderMetadata"
+                                width: parent.width
+                                text: root._readerMetadata
+                                textFormat: Text.PlainText
+                                color: Color.menu.text
+                                opacity: 0.7
+                                visible: !!text
+                                wrapMode: Text.Wrap
+                            }
+                            Flow {
+                                id: readerTags
+                                objectName: "tiddlywikiReaderTags"
+                                width: parent.width
+                                spacing: 8
+                                visible: root._readerTags.length > 0
+                                Repeater {
+                                    model: root._readerTags
+                                    delegate: Rectangle {
+                                        objectName: "tiddlywikiReaderTag"
+                                        required property string modelData
+                                        width: Math.min(readerTags.width, tagText.implicitWidth + 20)
+                                        height: tagText.implicitHeight + 12
+                                        radius: 6
+                                        color: Color.menu.selectedBackground
+                                        border.color: Color.menu.border
+                                        Label {
+                                            id: tagText
+                                            x: 10
+                                            y: 6
+                                            width: Math.max(0, parent.width - 20)
+                                            text: parent.modelData
+                                            textFormat: Text.PlainText
+                                            wrapMode: Text.WrapAnywhere
+                                            color: Color.menu.text
+                                            font.pixelSize: 14
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                objectName: "tiddlywikiReaderDivider"
+                                width: parent.width
+                                height: 1
+                                visible: !!root._readerMetadata || root._readerTags.length > 0
+                                color: Color.menu.border
+                            }
+                            TextEdit {
+                                id: readerText
+                                objectName: "tiddlywikiReaderText"
+                                width: parent.width
+                                height: contentHeight
+                                text: root._readerHtml
+                                textFormat: TextEdit.RichText
+                                readOnly: true
+                                selectByMouse: true
+                                persistentSelection: true
+                                activeFocusOnTab: true
+                                wrapMode: TextEdit.Wrap
+                                color: Color.menu.text
+                                selectionColor: Color.menu.selectedBackground
+                                selectedTextColor: Color.menu.selectedText
+                                font.pixelSize: 16
+                                onCursorPositionChanged: if (activeFocus) readerScroller.ensureCursorVisible()
+                                // The backend supplies body-only, image-free HTML without links.
+                            }
                         }
                     }
                     Button {

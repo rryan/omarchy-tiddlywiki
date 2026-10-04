@@ -209,6 +209,70 @@ def sanitize_html(markup):
     return parser.result()
 
 
+class TiddlerBody(HTMLParser):
+    """Select the body boundary before forwarding content to the sanitizer."""
+    void = StaticRichText.void | frozenset(("col", "param"))
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.sanitizer = StaticRichText()
+        self.stack = []
+        self.blocked_depth = 0
+        self.body_depth = None
+        self.complete = False
+
+    def handle_starttag(self, tag, attrs):
+        if self.complete:
+            return
+        if self.body_depth is not None:
+            self.sanitizer.handle_starttag(tag, attrs)
+        elif tag == "div" and not self.blocked_depth and any(
+            name == "class" and "tc-tiddler-body" in (value or "").split()
+            for name, value in attrs
+        ):
+            self.body_depth = len(self.stack)
+        if tag not in self.void:
+            self.stack.append(tag)
+            if tag in StaticRichText.blocked:
+                self.blocked_depth += 1
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self.void:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if self.complete or tag not in self.stack:
+            return
+        position = len(self.stack) - 1 - self.stack[::-1].index(tag)
+        if self.body_depth is not None:
+            if position <= self.body_depth:
+                self.complete = True
+            else:
+                self.sanitizer.handle_endtag(tag)
+        self.blocked_depth -= sum(opened in StaticRichText.blocked for opened in self.stack[position:])
+        del self.stack[position:]
+
+    def handle_data(self, data):
+        if self.body_depth is not None and not self.complete:
+            self.sanitizer.handle_data(data)
+
+    def result(self):
+        if not self.complete:
+            raise WikiError("The wiki returned no complete rendered tiddler body.")
+        return self.sanitizer.result()
+
+
+def sanitize_tiddler_html(markup):
+    parser = TiddlerBody()
+    try:
+        parser.feed(markup)
+        parser.close()
+    except AssertionError:
+        raise WikiError("The wiki returned malformed rendered HTML.") from None
+    return parser.result()
+
+
 def read_tiddler(config, draft):
     title = draft.get("title")
     if not isinstance(title, str) or not title:
@@ -224,7 +288,7 @@ def read_tiddler(config, draft):
         raise WikiError("The wiki returned a different tiddler.")
     with request("/" + encoded, extra={"Accept": "text/html"}) as response:
         markup = response.read().decode("utf-8")
-    rendered = sanitize_html(markup)
+    rendered = sanitize_tiddler_html(markup)
     if not is_text_type(fields["type"]) and not html.unescape(re.sub(r"<[^>]*>", "", rendered)).strip():
         rendered = "<p>This non-text tiddler has no static text preview.</p>"
     return {"ok": True, "tiddler": fields, "html": rendered}

@@ -26,7 +26,9 @@ omarchy-shell shell summon rryan.tiddlywiki '{"mode":"search"}'
 Results update as you type. Exact titles and prefixes rank first, followed
 by title substrings, acronyms/subsequences, and body-text matches. Every
 query word must match a title or the body; an empty query lists all ordinary
-tiddlers. The index is refreshed on each summon and stays only in memory.
+tiddlers. The prepared index stays only in memory and is reused immediately
+on reopening while a background request refreshes it. Results remain visible
+while typing; a failed refresh keeps cached results searchable.
 
 - **Tab** from the query focuses results. Ordinary **j/k** still type in the query.
 - In results, **j/k** or **Down/Up** select the next/previous result.
@@ -35,15 +37,27 @@ tiddlers. The index is refreshed on each summon and stays only in memory.
 - **Escape** closes the reader first, then the search window.
 
 The reader is modal, selectable, and read-only. It fetches fresh fields and
-the server-rendered tiddler, retaining static text formatting but removing
-scripts, links, images, and embedded interactive content. Non-text attachment
-bodies are not searched or displayed as base64; their titles remain searchable.
+only the server-rendered tiddler body, excluding the wiki title/subtitle and
+duplicate tiddler chrome. Its native header shows the tiddler title, a muted
+author and local date/time separated by a dot, and individually spaced tag
+chips. Metadata and wrapping tags scroll with the body, so many tags do not
+hide the content in a small window.
+
+Static text formatting is retained; scripts, links, images, and embedded
+interactive content are removed. Non-text attachment bodies are not searched
+or displayed as base64; their titles remain searchable. The server's static
+render must contain a `tc-tiddler-body` container; an absent or incomplete
+container produces a reader error instead of displaying the entire wiki page.
+
+Wheel/touchpad distance is amplified in both results and the reader:
+2× pixel deltas and 192 pixels per full wheel notch. No extra animation or
+easing is added; native touch flicks and text selection remain available.
 Search and read use GET requests only, including for read-only wiki accounts.
 Searching does not discard an unsaved editor draft.
 
 ## Install
 
-Requires Omarchy's Quickshell shell and Python 3 (standard library only).
+Requires Omarchy's Quickshell shell with Qt 6.9+ and Python 3 (standard library only).
 
 ```sh
 omarchy plugin add https://github.com/rryan/omarchy-tiddlywiki.git --enable --yes
