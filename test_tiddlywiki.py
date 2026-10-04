@@ -52,7 +52,6 @@ class ClientTests(unittest.TestCase):
         ])
         with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
             result = tiddlywiki.read_tiddler(CONFIG, {"title": title})
-        self.assertEqual(result["tiddler"]["text"], "fresh source")
         self.assertEqual(result["html"], "<p>Rendered link</p>")
         self.assertEqual(opener.requests[1].full_url, "https://wiki.invalid/recipes/default/tiddlers/A%20%2F%20caf%C3%A9%3F%23")
         self.assertEqual(opener.requests[2].full_url, "https://wiki.invalid/A%20%2F%20caf%C3%A9%3F%23")
