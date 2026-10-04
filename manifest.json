@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "rryan.tiddlywiki",
+  "name": "TiddlyWiki",
+  "version": "1.0.0",
+  "author": "rryan",
+  "description": "Create a TiddlyWiki tiddler from the bar or a keyboard shortcut",
+  "kinds": ["bar-widget", "panel"],
+  "entryPoints": { "barWidget": "BarWidget.qml", "panel": "Editor.qml" },
+  "keepLoaded": true,
+  "barWidget": { "displayName": "New tiddler", "category": "Productivity", "allowMultiple": false, "defaultSection": "right" }
+}
