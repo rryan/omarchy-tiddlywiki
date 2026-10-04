@@ -14,6 +14,7 @@ Item {
     property string message: ""
     property bool failed: false
     property string pendingDraft: ""
+    property bool dismissAfterSave: false
 
     function open(payloadJson) {
         opened = true
@@ -24,7 +25,7 @@ Item {
         opened = false
         if (shell) shell.hide("rryan.tiddlywiki")
     }
-    function save() {
+    function save(dismissOnSuccess) {
         if (saving) return
         if (!titleField.text.trim()) {
             failed = true
@@ -32,6 +33,7 @@ Item {
             titleField.forceActiveFocus()
             return
         }
+        dismissAfterSave = dismissOnSuccess === true
         message = "Saving…"
         failed = false
         pendingDraft = JSON.stringify({title: titleField.text, tags: tagsField.text,
@@ -53,7 +55,8 @@ Item {
             tagsField.clear()
             bodyField.clear()
             typeField.editText = "text/x-markdown"
-            titleField.forceActiveFocus()
+            if (dismissAfterSave) root.dismiss()
+            else titleField.forceActiveFocus()
         }
     }
 
@@ -89,7 +92,7 @@ Item {
             anchors.fill: parent
             anchors.margins: 24
             spacing: 12
-            Shortcut { sequence: "Ctrl+Return"; enabled: root.opened && !root.saving; onActivated: root.save() }
+            Shortcut { sequence: "Ctrl+Return"; enabled: root.opened && !root.saving; onActivated: root.save(true) }
             Shortcut { sequence: "Escape"; enabled: root.opened; onActivated: root.dismiss() }
 
             Label {
@@ -106,6 +109,22 @@ Item {
                 placeholderText: "Tiddler title"
                 enabled: !root.saving
                 selectByMouse: true
+                KeyNavigation.tab: bodyField
+            }
+            Label { text: "Body"; color: Color.menu.text }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                TextArea {
+                    id: bodyField
+                    objectName: "tiddlerBody"
+                    placeholderText: "Write your post…"
+                    wrapMode: TextEdit.Wrap
+                    selectByMouse: true
+                    enabled: !root.saving
+                    KeyNavigation.tab: tagsField
+                    KeyNavigation.priority: KeyNavigation.BeforeItem
+                }
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -131,19 +150,6 @@ Item {
                         model: ["text/x-markdown", "text/vnd.tiddlywiki", "text/plain", "text/html"]
                         enabled: !root.saving
                     }
-                }
-            }
-            Label { text: "Body"; color: Color.menu.text }
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                TextArea {
-                    id: bodyField
-                    objectName: "tiddlerBody"
-                    placeholderText: "Write your post…"
-                    wrapMode: TextEdit.Wrap
-                    selectByMouse: true
-                    enabled: !root.saving
                 }
             }
             Label {

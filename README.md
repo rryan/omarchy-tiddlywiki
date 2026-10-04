@@ -6,11 +6,13 @@ Native Quickshell tiddler editor, opened by the bar's pencil button or:
 omarchy-shell shell summon rryan.tiddlywiki '{}'
 ```
 
-Title, tags, body, and editable content type; default `text/x-markdown`.
-Tags use TiddlyWiki list syntax: `post [[multi word tag]]`. Save with the
-Save button or Ctrl+Enter. Escape/Close hides the editor without clearing
-the draft. A successful save clears the fields for another post and shows
-confirmation. Errors preserve the draft. Drafts do not survive shell reloads.
+Title and body come first, followed by tags and editable content type
+(default `text/x-markdown`). Tab moves from title to body, then tags.
+Tags use TiddlyWiki list syntax: `post [[multi word tag]]`.
+Ctrl+Enter saves and dismisses the editor after success. The Save button
+saves and keeps the editor open for another post. Errors keep the dialog
+open and preserve the draft. Escape/Close hides the editor without clearing
+the draft. Successful saves clear the fields; drafts do not survive shell reloads.
 
 ## Install
 
