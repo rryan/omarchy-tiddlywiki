@@ -60,6 +60,10 @@ Item {
 
     function showSaved(title) {
         if (!opened) return
+        if (editor.closeAfterSave) {
+            dismiss()
+            return
+        }
         var showView = _mode === "create" || _mode === "edit"
             || (_mode === "view" && search.readerTitle === title)
         search.refreshIndex()

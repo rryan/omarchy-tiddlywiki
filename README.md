@@ -10,10 +10,12 @@ omarchy-shell shell summon rryan.tiddlywiki '{}'
 Title and body come first, followed by tags and editable content type
 (default `text/x-markdown`). Tab moves from title to body, then tags.
 Tags use TiddlyWiki list syntax: `post [[multi word tag]]`.
-**Ctrl+Enter** and **Save** both save and replace the editor with the saved
-tiddler's view in the same window. Errors retain the draft. **Back/Escape**
-from editing returns to the view; from creation it hides the app. Creation
-and editing drafts are retained independently until saved or the shell reloads.
+**Ctrl+Enter** and **Save** close the app after successfully saving a new
+tiddler, Today journal, or quick note. Regular existing edits opened from
+the view return to that view after saving. Errors keep the form and draft
+open. **Back/Escape** from editing returns to the view; from creation it
+hides the app. Creation and editing drafts are retained independently until
+saved or the shell reloads.
 Switching away from a dirty edit never silently discards it.
 
 ### Today and quick notes
@@ -21,6 +23,7 @@ Switching away from a dirty edit never silently discards it.
 - **Super+Shift+T** opens today's local-date title (`Y/M/D`, for example
   `2026/10/5`) for editing if it exists, otherwise prefills a new Markdown
   tiddler. **Journal** is added without removing existing tags or metadata.
+  The body receives focus with the cursor at the end, including restored drafts.
 - **Super+Shift+I** prefills a Markdown quick note tagged **Note**, titled
   `Y/M/D Quick Note N`. A fresh server index selects the lowest unused
   positive number for today; after saving, the next summon allocates another.

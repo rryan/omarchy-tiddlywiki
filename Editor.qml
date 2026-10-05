@@ -18,6 +18,7 @@ Item {
     property var _editDraft: null
     property var _preparedDrafts: ({})
     property string _preparedKey: ""
+    property string _preparedKind: ""
     property var _pendingPrepared: null
     property var _original: null
     property string _baseline: ""
@@ -28,6 +29,7 @@ Item {
     property bool _saveReceived: false
     readonly property bool confirmationPending: !!discardLoader.item && discardLoader.item.visible
     readonly property bool dirty: editing && draftKey(currentDraft()) !== _baseline
+    readonly property bool closeAfterSave: !editing || _preparedKind === "today" || _preparedKind === "quick-note"
     signal savedTiddler(string title)
     signal closeRequested()
     signal editOpened()
@@ -86,6 +88,7 @@ Item {
         _pendingPrepared = null
         retainDraft()
         _preparedKey = ""
+        _preparedKind = ""
         editing = false
         showDraft(_createDraft)
         return true
@@ -96,6 +99,7 @@ Item {
         }).join(" ") : String(tags || "")
     }
     function applyPrepared(prepared, restored) {
+        _preparedKind = prepared ? prepared.kind : ""
         if (!prepared) return
         if (restored) {
             // Preserve the editable draft rather than replacing it with server tags.
@@ -108,6 +112,13 @@ Item {
         }
         retainDraft()
         preparedOpened(prepared.mode, titleField.text)
+        if (prepared.kind === "today") Qt.callLater(function() {
+            if (root.opened && root.visible) {
+                bodyField.forceActiveFocus()
+                bodyField.deselect()
+                bodyField.cursorPosition = bodyField.length
+            }
+        })
     }
     function openPrepared(result) {
         if (saving || !result || result.ok !== true || !result.fields
