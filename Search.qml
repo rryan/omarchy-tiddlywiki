@@ -151,7 +151,8 @@ Item {
         _readerTitle = selectedTitle
         _readerLoading = true
         reader.open()
-        request("read", {title: selectedTitle})
+        request("read", {title: selectedTitle,
+            context: _documents.map(function(document) { return document.fields })})
         Qt.callLater(function() { if (reader.visible) readerText.forceActiveFocus() })
     }
 
@@ -326,6 +327,10 @@ Item {
                         if (event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier)) {
                             root.focusResults()
                             event.accepted = true
+                        } else if (event.modifiers === Qt.NoModifier
+                                && (event.key === Qt.Key_Down || event.key === Qt.Key_Up)) {
+                            root.moveSelection(event.key === Qt.Key_Down ? 1 : -1)
+                            event.accepted = true
                         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                             root.openSelected()
                             event.accepted = true
@@ -433,7 +438,7 @@ Item {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: "Tab: results   ·   j/k or ↑/↓: select   ·   Enter: read   ·   Shift+Tab: query   ·   Esc: close"
+                    text: "↑/↓: select   ·   Tab: results (j/k)   ·   Enter: read   ·   Shift+Tab: query   ·   Esc: close"
                     color: Color.menu.text
                     opacity: 0.65
                     wrapMode: Text.Wrap
@@ -485,6 +490,27 @@ Item {
                 }
                 contentItem: ColumnLayout {
                     spacing: 12
+                    FontMetrics { id: readerFontMetrics; font: readerText.font }
+                    Shortcut {
+                        sequence: "Down"
+                        enabled: root.opened && reader.visible
+                        onActivated: readerScroller.scrollViewport(1, false)
+                    }
+                    Shortcut {
+                        sequence: "Up"
+                        enabled: root.opened && reader.visible
+                        onActivated: readerScroller.scrollViewport(-1, false)
+                    }
+                    Shortcut {
+                        sequence: "PgDown"
+                        enabled: root.opened && reader.visible
+                        onActivated: readerScroller.scrollViewport(1, true)
+                    }
+                    Shortcut {
+                        sequence: "PgUp"
+                        enabled: root.opened && reader.visible
+                        onActivated: readerScroller.scrollViewport(-1, true)
+                    }
                     Label {
                         objectName: "tiddlywikiReaderStatus"
                         Layout.fillWidth: true
@@ -522,6 +548,12 @@ Item {
                             if (destination !== contentY) {
                                 contentY = readerWheel.bounded(destination)
                             }
+                        }
+                        function scrollViewport(direction, page) {
+                            cancelFlick()
+                            var line = Math.max(1, readerFontMetrics.lineSpacing)
+                            var distance = page ? Math.max(line, height - line) : line
+                            contentY = readerWheel.bounded(contentY + direction * distance)
                         }
                         Column {
                             id: readerContent

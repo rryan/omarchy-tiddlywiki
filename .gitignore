@@ -6,3 +6,6 @@ tiddlywiki.json
 # Python runtime artifacts.
 __pycache__/
 *.pyc
+
+# Trusted local rendering dependencies are installed with npm ci.
+node_modules/

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "rryan.tiddlywiki",
   "name": "TiddlyWiki",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "author": "rryan",
   "description": "Create tiddlers, search titles and content, and read TiddlyWiki in a native window",
   "kinds": ["bar-widget", "panel"],

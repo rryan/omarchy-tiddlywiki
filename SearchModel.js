@@ -58,7 +58,7 @@ function prepareIndex(tiddlers) {
             continue;
         var body = String(tiddler.text || "");
         documents.push({title: tiddler.title, titleFolded: folded(tiddler.title),
-            initials: initials(tiddler.title), body: body, bodyFolded: folded(body)});
+            initials: initials(tiddler.title), body: body, bodyFolded: folded(body), fields: tiddler});
     }
     return documents;
 }

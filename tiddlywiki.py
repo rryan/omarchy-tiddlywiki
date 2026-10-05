@@ -7,6 +7,7 @@ import html
 from html.parser import HTMLParser
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -273,6 +274,37 @@ def sanitize_tiddler_html(markup):
     return parser.result()
 
 
+def render_locally(fields, context):
+    renderer = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renderer.js")
+    try:
+        process = subprocess.run(
+            ["node", renderer],
+            input=json.dumps({"tiddler": fields, "context": context}),
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+    except FileNotFoundError:
+        raise WikiError("Local rendering requires Node.js. Install Node.js and the plugin dependencies.") from None
+    except subprocess.TimeoutExpired:
+        raise WikiError("Local tiddler rendering timed out.") from None
+    except (OSError, UnicodeError):
+        raise WikiError("Could not start the local tiddler renderer.") from None
+    if process.returncode:
+        raise WikiError("Local tiddler rendering failed. Check the plugin installation and dependencies.")
+    try:
+        result = json.loads(process.stdout)
+    except (ValueError, TypeError):
+        raise WikiError("The local tiddler renderer returned an invalid response.") from None
+    if not isinstance(result, dict):
+        raise WikiError("The local tiddler renderer returned an invalid response.")
+    if result.get("ok") is not True:
+        # Only the bundled renderer's controlled error is public; stderr is never forwarded.
+        error = result.get("error")
+        raise WikiError(error if isinstance(error, str) and error else "Local tiddler rendering failed.")
+    if not isinstance(result.get("html"), str):
+        raise WikiError("The local tiddler renderer returned an invalid response.")
+    return result["html"]
+
+
 def read_tiddler(config, draft):
     title = draft.get("title")
     if not isinstance(title, str) or not title:
@@ -286,8 +318,7 @@ def read_tiddler(config, draft):
         fields = normalize_tiddler(json.load(response))
     if fields["title"] != title:
         raise WikiError("The wiki returned a different tiddler.")
-    with request("/" + encoded, extra={"Accept": "text/html"}) as response:
-        markup = response.read().decode("utf-8")
+    markup = render_locally(fields, draft.get("context", []))
     rendered = sanitize_tiddler_html(markup)
     if not is_text_type(fields["type"]) and not html.unescape(re.sub(r"<[^>]*>", "", rendered)).strip():
         rendered = "<p>This non-text tiddler has no static text preview.</p>"

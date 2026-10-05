@@ -30,41 +30,56 @@ tiddlers. The prepared index stays only in memory and is reused immediately
 on reopening while a background request refreshes it. Results remain visible
 while typing; a failed refresh keeps cached results searchable.
 
-- **Tab** from the query focuses results. Ordinary **j/k** still type in the query.
-- In results, **j/k** or **Down/Up** select the next/previous result.
-- **Enter** opens the selection; from the query it opens the top result.
+- **Down/Up** select the next/previous result even with the query focused.
+  Focus stays in the query; ordinary **j/k** remain text input there.
+- **Tab** focuses results, where **j/k** also select the next/previous result.
+- **Enter** opens the selected result from either the query or results.
 - **Shift+Tab** returns to the query.
 - **Escape** closes the reader first, then the search window.
 
-The reader is modal, selectable, and read-only. It fetches fresh fields and
-only the server-rendered tiddler body, excluding the wiki title/subtitle and
-duplicate tiddler chrome. Its native header shows the tiddler title, a muted
-author and local date/time separated by a dot, and individually spaced tag
-chips. Metadata and wrapping tags scroll with the body, so many tags do not
-hide the content in a small window.
+The reader is modal, selectable, and read-only. It fetches fresh JSON fields
+and renders only the body locally using pinned TiddlyWiki 5.3.6 core and
+Markdown support. Ordinary transclusions use the cached in-memory index;
+the freshly fetched selected tiddler overrides its cached copy. Titles with
+slashes, spaces, `@`, `%`, or Unicode do not need an HTML route or proxy change.
+Its native header shows the title, a muted author and local date/time
+separated by a dot, and individually spaced tag chips. Metadata and wrapping
+tags scroll with the body, so many tags do not hide the content in a small window.
 
 Static text formatting is retained; scripts, links, images, and embedded
 interactive content are removed. Non-text attachment bodies are not searched
-or displayed as base64; their titles remain searchable. The server's static
-render must contain a `tc-tiddler-body` container; an absent or incomplete
-container produces a reader error instead of displaying the entire wiki page.
+or displayed as base64; their titles remain searchable. Remote plugin/module
+code and `$:/` system tiddlers are not imported into the local renderer:
+server-specific plugins and system customizations may render differently or
+be unavailable. The trusted body template excludes wiki and tiddler chrome.
 
 Wheel/touchpad distance is amplified in both results and the reader:
 2× pixel deltas and 192 pixels per full wheel notch. No extra animation or
 easing is added; native touch flicks and text selection remain available.
+In the reader, **Down/Up** scroll one line and **Page Down/Page Up** scroll
+one viewport with a one-line overlap. These shortcuts use unmodified keys;
+modified keys retain their normal control behavior.
 Search and read use GET requests only, including for read-only wiki accounts.
 Searching does not discard an unsaved editor draft.
 
 ## Install
 
-Requires Omarchy's Quickshell shell with Qt 6.9+ and Python 3 (standard library only).
+Requires Omarchy's Quickshell shell with Qt 6.9+, Python 3 (standard library
+only), and Node.js 18+ with npm for the local renderer.
 
 ```sh
 omarchy plugin add https://github.com/rryan/omarchy-tiddlywiki.git --enable --yes
+npm --prefix "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/rryan.tiddlywiki" ci \
+  --ignore-scripts --no-audit --no-fund
 ```
 
 The plugin is placed in the right bar section; move it with
 `omarchy bar move rryan.tiddlywiki --section right`.
+
+Dependencies are pinned in `package-lock.json`; installation does not run
+package scripts. After an update changes the lockfile, rerun `npm ci` in the
+installed plugin directory. Restart the shell to reload updated QML:
+`omarchy restart shell`. A shell restart discards unsaved editor drafts.
 
 Create `~/.config/omarchy/tiddlywiki.json` (or the same path beneath
 `XDG_CONFIG_HOME`) with permissions **0600**:
