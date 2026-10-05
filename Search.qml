@@ -373,6 +373,7 @@ Item {
                 palette.highlight: Color.menu.selectedBackground
                 palette.highlightedText: Color.menu.selectedText
                 onTextChanged: root.scheduleSearch()
+                EmacsInput { control: queryField }
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function(event) {
                     if (event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier)) {

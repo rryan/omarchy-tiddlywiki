@@ -281,6 +281,7 @@ Item {
             enabled: !root.saving
             readOnly: root.editing
             selectByMouse: true
+            EmacsInput { control: titleField }
             KeyNavigation.tab: bodyField
         }
         Label { text: "Body"; color: Color.menu.text }
@@ -294,6 +295,7 @@ Item {
                 wrapMode: TextEdit.Wrap
                 selectByMouse: true
                 enabled: !root.saving
+                EmacsInput { control: bodyField; multiline: true }
                 KeyNavigation.tab: tagsField
                 KeyNavigation.backtab: titleField
                 KeyNavigation.priority: KeyNavigation.BeforeItem
@@ -311,6 +313,7 @@ Item {
                     placeholderText: "tag [[multi word tag]]"
                     enabled: !root.saving
                     selectByMouse: true
+                    EmacsInput { control: tagsField }
                     KeyNavigation.tab: typeField
                     KeyNavigation.backtab: bodyField
                 }
@@ -324,6 +327,7 @@ Item {
                     editable: true
                     model: ["text/x-markdown", "text/markdown", "text/vnd.tiddlywiki", "text/plain", "text/html"]
                     enabled: !root.saving
+                    EmacsInput { control: typeField.contentItem }
                     KeyNavigation.backtab: tagsField
                 }
             }

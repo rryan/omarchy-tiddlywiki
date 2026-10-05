@@ -53,6 +53,31 @@ while typing; a failed refresh keeps cached results searchable.
 - **e** or **Edit** in view opens the existing tiddler for editing.
   Titles are immutable; read-only accounts and non-text attachments cannot edit.
 
+Editable inputs (query, title, body, tags, and content type) use Emacs-style bindings:
+
+| Keys | Action |
+| --- | --- |
+| Ctrl+A / Ctrl+E | Beginning / end of the current logical line (not Select All) |
+| Ctrl+B / Ctrl+F | Previous / next character |
+| Alt+B / Alt+F | Previous / next word |
+| Ctrl+P / Ctrl+N | Previous / next visual line in the body, retaining the horizontal position; no-op in single-line inputs |
+| Ctrl+H / Ctrl+D | Delete previous / next character |
+| Ctrl+K | Kill to line end, or kill the newline when already at line end |
+| Ctrl+U | Kill from line beginning to the cursor |
+| Ctrl+W / Alt+Backspace | Kill previous word, or the selected region |
+| Alt+D | Kill next word, or the selected region |
+| Ctrl+Y | Yank the latest kill, replacing any selection |
+| Alt+Y | Immediately after yanking, cycle through earlier kills |
+
+The 32-entry kill ring is shared across these inputs and stays in memory until
+the shell restarts; it does not modify the system clipboard. Consecutive kills
+in one input combine, with backward kills prepended. Other keyboard commands
+end the sequence. Character movement/deletion preserves UTF-16 surrogate pairs.
+Word movement treats whitespace and common punctuation as separators.
+Read-only titles still allow movement but cannot be changed by deletion or yank.
+Normal typing, clipboard shortcuts, Tab navigation, query arrows, and Ctrl+Enter
+save remain available. This is text-editing support, not a full Emacs emulator.
+
 The view is selectable and renders only the freshly fetched JSON tiddler body
 locally using pinned TiddlyWiki 5.3.6 core and
 Markdown support. Ordinary transclusions use the cached in-memory index;
