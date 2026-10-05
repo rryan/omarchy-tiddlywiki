@@ -16,6 +16,9 @@ Item {
     property bool failed: false
     property var _createDraft: emptyDraft()
     property var _editDraft: null
+    property var _preparedDrafts: ({})
+    property string _preparedKey: ""
+    property var _pendingPrepared: null
     property var _original: null
     property string _baseline: ""
     property var _pendingEdit: null
@@ -28,6 +31,8 @@ Item {
     signal savedTiddler(string title)
     signal closeRequested()
     signal editOpened()
+    signal preparedOpened(string mode, string title)
+    signal preparedCancelled()
 
     function emptyDraft() {
         return {title: "", text: "", tags: "", type: "text/x-markdown", message: "", failed: false}
@@ -42,6 +47,7 @@ Item {
     function retainDraft() {
         if (_draftSaved) return
         if (editing) _editDraft = currentDraft()
+        else if (_preparedKey) _preparedDrafts[_preparedKey] = currentDraft()
         else _createDraft = currentDraft()
     }
     function showDraft(draft) {
@@ -77,46 +83,95 @@ Item {
         if (saving) return false
         closeConfirmation()
         _pendingEdit = null
+        _pendingPrepared = null
         retainDraft()
+        _preparedKey = ""
         editing = false
         showDraft(_createDraft)
         return true
     }
-    function openForEdit(fields) {
+    function formattedTags(tags) {
+        return Array.isArray(tags) ? tags.map(function(tag) {
+            return /\s/.test(tag) ? "[[" + tag + "]]" : tag
+        }).join(" ") : String(tags || "")
+    }
+    function applyPrepared(prepared, restored) {
+        if (!prepared) return
+        if (restored) {
+            // Preserve the editable draft rather than replacing it with server tags.
+            var tags = tagsField.text.match(/\[\[[\s\S]*?\]\]|[^\s]+/g) || []
+            var requiredTag = prepared.kind === "today" ? "Journal" : "Note"
+            if (!tags.some(function(tag) { return tag === requiredTag || tag === "[[" + requiredTag + "]]" }))
+                tagsField.text += (tagsField.text && !/\s$/.test(tagsField.text) ? " " : "") + requiredTag
+        } else {
+            tagsField.text = formattedTags(prepared.tags)
+        }
+        retainDraft()
+        preparedOpened(prepared.mode, titleField.text)
+    }
+    function openPrepared(result) {
+        if (saving || !result || result.ok !== true || !result.fields
+                || (result.kind !== "today" && result.kind !== "quick-note")
+                || typeof result.date !== "string" || !Array.isArray(result.tags)
+                || typeof result.fields.title !== "string") return false
+        if (result.mode === "edit") return openForEdit(result.fields, result)
+        if (result.mode !== "create") return false
+        closeConfirmation()
+        _pendingEdit = null
+        _pendingPrepared = null
+        retainDraft()
+        _preparedKey = result.kind + ":" + result.date
+        editing = false
+        var draft = _preparedDrafts[_preparedKey]
+        var restored = !!draft
+        if (!draft) {
+            draft = {title: result.fields.title, text: String(result.fields.text || ""),
+                tags: formattedTags(result.tags), type: String(result.fields.type || "text/x-markdown"),
+                message: "", failed: false}
+        }
+        showDraft(draft)
+        applyPrepared(result, restored)
+        return true
+    }
+    function openForEdit(fields, prepared) {
         if (saving || !fields || typeof fields.title !== "string") return false
         closeConfirmation()
         _pendingEdit = null
+        _pendingPrepared = null
         retainDraft()
         if (_editDraft && _original && _original.title === fields.title && sameOriginal(fields)) {
+            _preparedKey = ""
             editing = true
             showDraft(_editDraft)
+            applyPrepared(prepared, true)
             return true
         }
         if (_editDraft && draftKey(_editDraft) !== _baseline) {
             _pendingEdit = JSON.parse(JSON.stringify(fields))
+            _pendingPrepared = prepared || null
             discardLoader.active = true
             discardLoader.item.open()
             return false
         }
-        beginEdit(fields)
+        beginEdit(fields, prepared)
         return true
     }
-    function beginEdit(fields) {
+    function beginEdit(fields, prepared) {
         _original = JSON.parse(JSON.stringify(fields))
-        var tags = Array.isArray(fields.tags) ? fields.tags.map(function(tag) {
-            return /\s/.test(tag) ? "[[" + tag + "]]" : tag
-        }).join(" ") : String(fields.tags || "")
-        _editDraft = {title: fields.title, text: String(fields.text || ""), tags: tags,
+        _editDraft = {title: fields.title, text: String(fields.text || ""), tags: formattedTags(fields.tags),
             type: String(fields.type || "text/vnd.tiddlywiki"), message: "", failed: false}
         _baseline = draftKey(_editDraft)
+        _preparedKey = ""
         editing = true
         showDraft(_editDraft)
+        applyPrepared(prepared, false)
     }
     function close() {
         retainDraft()
         opened = false
         closeConfirmation()
         _pendingEdit = null
+        _pendingPrepared = null
     }
     function requestClose() {
         retainDraft()
@@ -164,7 +219,8 @@ Item {
             _editDraft = null
             _original = null
             _baseline = ""
-        } else _createDraft = emptyDraft()
+        } else if (_preparedKey) delete _preparedDrafts[_preparedKey]
+        else _createDraft = emptyDraft()
         _draftSaved = true
         opened = false
         // Clear only the saved draft. The other mode's retained draft remains untouched.
@@ -229,40 +285,46 @@ Item {
                 }
                 onDiscarded: {
                     var fields = root._pendingEdit
+                    var prepared = root._pendingPrepared
                     root._pendingEdit = null
+                    root._pendingPrepared = null
                     discardDialog.close()
                     if (fields) {
-                        root.beginEdit(fields)
+                        root.retainDraft()
+                        root.beginEdit(fields, prepared)
                         root.editOpened()
                     }
                 }
                 onRejected: {
+                    var prepared = root._pendingPrepared
                     var resume = root._pendingEdit && root._original
                         && root._pendingEdit.title === root._original.title
                     root._pendingEdit = null
+                    root._pendingPrepared = null
                     if (resume) {
+                        root.retainDraft()
                         root.editing = true
+                        root._preparedKey = ""
                         root.showDraft(root._editDraft)
+                        root.applyPrepared(prepared, true)
                         root.editOpened()
-                    }
+                    } else if (prepared) root.preparedCancelled()
                 }
             }
         }
     }
 
-    MarkdownPreview {
-        active: root.opened && root.visible
-        draftTitle: titleField.text
-        draftText: bodyField.text
-        draftTags: tagsField.text
-        draftType: typeField.editText
-        context: root.context
-    }
 
-    ColumnLayout {
+    RowLayout {
         anchors.fill: parent
         anchors.margins: 24
-        spacing: 12
+        spacing: 24
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumWidth: 0
+            Layout.preferredWidth: 1
+            spacing: 8
         Shortcut { sequence: "Ctrl+Return"; enabled: root.opened && root.visible && !root.saving && !root.confirmationPending; onActivated: root.save() }
         Shortcut { sequence: "Escape"; enabled: root.opened && root.visible && !root.confirmationPending; onActivated: root.requestClose() }
 
@@ -301,7 +363,7 @@ Item {
                 KeyNavigation.priority: KeyNavigation.BeforeItem
             }
         }
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
             ColumnLayout {
                 Layout.fillWidth: true
@@ -319,11 +381,12 @@ Item {
                 }
             }
             ColumnLayout {
+                Layout.fillWidth: true
                 Label { text: "Type"; color: Color.menu.text }
                 ComboBox {
                     id: typeField
                     objectName: "tiddlerType"
-                    Layout.preferredWidth: 225
+                    Layout.fillWidth: true
                     editable: true
                     model: ["text/x-markdown", "text/markdown", "text/vnd.tiddlywiki", "text/plain", "text/html"]
                     enabled: !root.saving
@@ -349,6 +412,20 @@ Item {
                 highlighted: true
                 onClicked: root.save()
             }
+        }
+    }
+        MarkdownPreview {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumWidth: 0
+            Layout.preferredWidth: 1
+            visible: markdown
+            active: root.opened && root.visible
+            draftTitle: titleField.text
+            draftText: bodyField.text
+            draftTags: tagsField.text
+            draftType: typeField.editText
+            context: root.context
         }
     }
 }

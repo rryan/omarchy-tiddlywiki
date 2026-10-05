@@ -202,6 +202,50 @@ def index(config):
             "wikiUrl": config["url"].rstrip("/") + "/"}
 
 
+def prepare(config, draft):
+    """Prepare a journal editor session without writing anything to the wiki."""
+    if not isinstance(draft, dict) or draft.get("kind") not in ("today", "quick-note"):
+        raise WikiError("Choose today or quick-note to prepare.")
+    kind = draft["kind"]
+    tag = "Journal" if kind == "today" else "Note"
+    now = datetime.datetime.now()
+    date = f"{now.year}/{now.month}/{now.day}"
+    request, _, recipe = connect(config, write=True)
+    base = "/recipes/" + urllib.parse.quote(recipe, safe="")
+    fields = None
+    title = date
+    if kind == "today":
+        path = base + "/tiddlers/" + urllib.parse.quote(title, safe="")
+        try:
+            with request(path) as response:
+                raw_fields = json.load(response)
+        except urllib.error.HTTPError as error:
+            error.close()
+            if error.code != 404:
+                raise
+        else:
+            fields = normalize_tiddler(raw_fields)
+            if fields["title"] != title:
+                raise WikiError("The wiki returned a different tiddler. Nothing was saved.")
+            if not is_text_type(fields["type"]) or not isinstance(raw_fields.get("text", ""), str):
+                raise WikiError("This editor only edits text tiddlers.")
+    else:
+        with request(base + "/tiddlers.json?exclude=bag") as response:
+            tiddlers = json.load(response)
+        if not isinstance(tiddlers, list):
+            raise WikiError("The wiki returned an invalid search index.")
+        titles = {normalize_tiddler(tiddler)["title"] for tiddler in tiddlers}
+        number = 1
+        while f"{date} Quick Note {number}" in titles:
+            number += 1
+        title = f"{date} Quick Note {number}"
+    mode = "edit" if fields is not None else "create"
+    if fields is None:
+        fields = {"title": title, "text": "", "type": "text/x-markdown", "tags": [tag]}
+    tags = list(dict.fromkeys([*fields["tags"], tag]))
+    return {"ok": True, "kind": kind, "date": date, "mode": mode, "fields": fields, "tags": tags}
+
+
 class StaticRichText(HTMLParser):
     """Allow only static Qt text formatting, never URLs or server attributes."""
     allowed = frozenset((
@@ -414,8 +458,8 @@ def _cancel_render(signum, _frame):
 def main():
     action = sys.argv[1] if len(sys.argv) == 2 else "create" if len(sys.argv) == 1 else None
     try:
-        if action not in ("create", "update", "index", "read", "preview"):
-            raise WikiError("Use create, update, index, read, or preview.")
+        if action not in ("create", "update", "index", "read", "preview", "prepare"):
+            raise WikiError("Use create, update, index, read, preview, or prepare.")
         if action in ("read", "preview"):
             signal.signal(signal.SIGTERM, _cancel_render)
         draft = json.loads(sys.stdin.readline())
@@ -434,6 +478,8 @@ def main():
                 result = read_tiddler(config, draft)
             elif action == "update":
                 result = update(config, draft)
+            elif action == "prepare":
+                result = prepare(config, draft)
             else:
                 result = create(config, draft)
     except urllib.error.HTTPError as error:

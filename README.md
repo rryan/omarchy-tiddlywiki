@@ -16,15 +16,34 @@ from editing returns to the view; from creation it hides the app. Creation
 and editing drafts are retained independently until saved or the shell reloads.
 Switching away from a dirty edit never silently discards it.
 
+### Today and quick notes
+
+- **Super+Shift+T** opens today's local-date title (`Y/M/D`, for example
+  `2026/10/5`) for editing if it exists, otherwise prefills a new Markdown
+  tiddler. **Journal** is added without removing existing tags or metadata.
+- **Super+Shift+I** prefills a Markdown quick note tagged **Note**, titled
+  `Y/M/D Quick Note N`. A fresh server index selects the lowest unused
+  positive number for today; after saving, the next summon allocates another.
+
+Direct summons use `{"mode":"today"}` and `{"mode":"quick-note"}`.
+Neither shortcut writes until Save/Ctrl+Enter. Ordinary creation and unsaved
+prepared creations are retained independently; repeating a shortcut restores
+its unsaved draft for that local date. A concurrent title collision stops
+creation rather than overwriting a tiddler. Read-only accounts cannot prepare
+an editable journal/note, and non-text Today attachments are not edited.
+
 ### Live Markdown preview
 
-A separate preview window opens automatically for `text/x-markdown` or
+Markdown editing splits the same window into equal left/right panes: the
+entire form on the left and the live preview on the right. There is no
+separate preview window. The preview appears for `text/x-markdown` or
 `text/markdown`, including MIME parameters and case variants. It updates
 200 ms after typing pauses, without moving typing focus out of the editor.
 The preview uses the same trusted local renderer and cached transclusion
 context as the view; preview rendering itself does not access credentials
-or make HTTP requests. Leaving the editor or choosing a non-Markdown type
-closes it. Cancelled preview requests terminate and reap their renderer child.
+or make HTTP requests. Choosing a non-Markdown type hides the preview and
+lets the form use the full width. Preview PageUp/PageDown applies only when
+preview text has focus. Cancelled renders terminate and reap their child.
 
 ## Search and read
 
@@ -145,28 +164,24 @@ arguments. Remote URLs must use HTTPS; redirects are refused to avoid
 sending credentials to a different server. The URL is the wiki root,
 without the browser's `#` fragment or embedded credentials.
 
-For creation and search shortcuts, add these to `~/.config/hypr/bindings.lua`:
+For creation, search, journal, and quick-note shortcuts, add these to `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind("SUPER + SHIFT + P", "Create TiddlyWiki tiddler", "omarchy-shell shell summon rryan.tiddlywiki '{}'")
 hl.unbind("SUPER + SHIFT + O") -- Previously Obsidian.
 o.bind("SUPER + SHIFT + O", "Search TiddlyWiki tiddlers", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"search\"}'")
+o.bind("SUPER + SHIFT + T", "Today's TiddlyWiki journal", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"today\"}'")
+o.bind("SUPER + SHIFT + I", "TiddlyWiki quick note", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"quick-note\"}'")
 ```
 
-For a centered floating main window and a preview near the top-right corner,
-use these rules in `~/.config/hypr/hyprland.lua`:
+For a centered floating window wide enough for the editor/preview split,
+use this rule in `~/.config/hypr/hyprland.lua`:
 
 ```lua
 o.window({ class = "^org\\.quickshell$", title = "^TiddlyWiki$" }, {
   float = true,
   center = true,
-  size = { 820, 680 },
-})
-o.window({ class = "^org\\.quickshell$", title = "^Markdown preview — TiddlyWiki$" }, {
-  float = true,
-  size = { 720, 620 },
-  move = { "monitor_w-window_w-24", "40" },
-  no_initial_focus = true,
+  size = { 1200, 760 },
 })
 ```
 

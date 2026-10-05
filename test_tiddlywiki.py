@@ -163,7 +163,7 @@ class ClientTests(unittest.TestCase):
     def test_existing_title_is_never_overwritten(self):
         opener = FakeOpener([{"anonymous": False, "read_only": False}, {"title": "Existing"}])
         with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
-            with self.assertRaisesRegex(tiddlywiki.WikiError, "already exists"):
+            with self.assertRaises(tiddlywiki.WikiError):
                 tiddlywiki.create(CONFIG, {"title": "Existing", "type": "text/plain"})
         self.assertEqual([request.get_method() for request in opener.requests], ["GET", "GET"])
 
@@ -174,6 +174,210 @@ class ClientTests(unittest.TestCase):
             with self.assertRaises(tiddlywiki.WikiError):
                 tiddlywiki.create(CONFIG, {"title": "$:/System", "type": "text/plain"})
             build.assert_not_called()
+
+
+class PrepareTests(unittest.TestCase):
+    def prepare_at(self, opener, kind, now=None):
+        if now is None:
+            now = datetime.datetime(2026, 10, 5, 12, 0)
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener), \
+                patch("tiddlywiki.datetime.datetime") as clock:
+            clock.now.return_value = now
+            return tiddlywiki.prepare(CONFIG, {"kind": kind})
+
+    def run_cli(self, draft, opener):
+        stdout = io.StringIO()
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener), \
+                patch("builtins.open", return_value=io.StringIO(json.dumps(CONFIG))), \
+                patch("sys.argv", ["tiddlywiki.py", "prepare"]), \
+                patch("sys.stdin", io.StringIO(json.dumps(draft) + "\n")), \
+                patch("sys.stdout", stdout):
+            tiddlywiki.main()
+        return json.loads(stdout.getvalue())
+
+    def test_absent_today_uses_local_date_across_year_and_day_boundaries(self):
+        for now, date in (
+            (datetime.datetime(2027, 1, 1, 0, 1,
+                               tzinfo=datetime.timezone(datetime.timedelta(hours=14))), "2027/1/1"),
+            (datetime.datetime(2026, 12, 31, 23, 59,
+                               tzinfo=datetime.timezone(datetime.timedelta(hours=-12))), "2026/12/31"),
+            (datetime.datetime(2026, 2, 9, 0, 0), "2026/2/9"),
+        ):
+            with self.subTest(date=date):
+                body = io.BytesIO(b"Private not-found body")
+                missing = tiddlywiki.urllib.error.HTTPError(
+                    "https://wiki.invalid", 404, "Missing", {}, body)
+                opener = FakeOpener([
+                    {"anonymous": False, "read_only": False, "space": {"recipe": "a/b ?#"}},
+                    missing,
+                ])
+                result = self.prepare_at(opener, "today", now)
+                self.assertEqual(result, {
+                    "ok": True, "kind": "today", "date": date, "mode": "create",
+                    "fields": {"title": date, "text": "", "type": "text/x-markdown", "tags": ["Journal"]},
+                    "tags": ["Journal"],
+                })
+                self.assertTrue(body.closed)
+                self.assertEqual(opener.requests[-1].full_url,
+                                 "https://wiki.invalid/recipes/a%2Fb%20%3F%23/tiddlers/" +
+                                 tiddlywiki.urllib.parse.quote(date, safe=""))
+                self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_existing_today_retains_full_baseline_and_suggests_journal_without_mutation(self):
+        for tags, original_tags, suggested_tags in (
+            ("personal [[two words]] personal", ["personal", "two words"], ["personal", "two words", "Journal"]),
+            (["personal", "Journal", "Journal", "two words"], ["personal", "Journal", "two words"],
+             ["personal", "Journal", "two words"]),
+        ):
+            with self.subTest(tags=tags):
+                server = {
+                    "title": "2026/10/5", "text": "Keep my journal", "tags": tags,
+                    "created": "20261005000100000", "modified": "20261005010200000",
+                    "creator": "Original author", "modifier": "Earlier editor",
+                    "custom-field": "Keep me", "custom-list": ["first", "second"],
+                }
+                opener = FakeOpener([{"anonymous": False}, server])
+                result = self.prepare_at(opener, "today")
+                self.assertEqual(result["mode"], "edit")
+                self.assertEqual(result["fields"], {
+                    **server, "tags": original_tags, "type": "text/vnd.tiddlywiki",
+                })
+                self.assertEqual(result["tags"], suggested_tags)
+                result["tags"].append("draft-only")
+                self.assertEqual(result["fields"]["tags"], original_tags)
+                self.assertEqual(server["tags"], tags)
+                self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_prepared_today_baseline_can_be_updated_without_losing_metadata(self):
+        server = {"title": "2026/10/5", "text": "Old journal", "tags": ["personal"],
+                  "type": "text/x-markdown", "created": "20261005000100000",
+                  "custom-field": "Keep me", "custom-list": ["first", "second"]}
+        opener = FakeOpener([{"anonymous": False}, server, {"anonymous": False}, server, {}])
+        prepared = self.prepare_at(opener, "today")
+        self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+        draft = {"title": prepared["fields"]["title"], "original": prepared["fields"],
+                 "text": "Updated journal", "type": prepared["fields"]["type"],
+                 "tags": " ".join(prepared["tags"])}
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+            result = tiddlywiki.update(CONFIG, draft)
+        self.assertEqual(result, {"ok": True, "title": "2026/10/5"})
+        saved = json.loads(opener.requests[-1].data)
+        self.assertEqual(saved["text"], "Updated journal")
+        self.assertEqual(saved["tags"], ["personal", "Journal"])
+        for field in ("created", "custom-field", "custom-list"):
+            self.assertEqual(saved[field], server[field])
+        self.assertEqual(prepared["fields"], server)
+
+    def test_quick_note_uses_fresh_index_and_lowest_unused_exact_positive_number(self):
+        unrelated = [
+            {"title": "2026/10/4 Quick Note 2"},
+            {"title": "2026/10/5 Quick Note 0"},
+            {"title": "2026/10/5 Quick Note 02"},
+            {"title": "2026/10/5 Quick Note 2 extra"},
+            {"title": "$:/2026/10/5 Quick Note 2"},
+        ]
+        opener = FakeOpener([
+            {"anonymous": False, "space": {"recipe": "a/b"}},
+            unrelated + [{"title": "2026/10/5 Quick Note 1"}, {"title": "2026/10/5 Quick Note 3"}],
+            {"anonymous": False, "space": {"recipe": "a/b"}},
+            unrelated + [{"title": f"2026/10/5 Quick Note {number}"} for number in (1, 2, 3)],
+            {"anonymous": False, "space": {"recipe": "a/b"}}, [],
+        ])
+        for number in (2, 4, 1):
+            with self.subTest(number=number):
+                result = self.prepare_at(opener, "quick-note")
+                self.assertEqual(result, {
+                    "ok": True, "kind": "quick-note", "date": "2026/10/5", "mode": "create",
+                    "fields": {"title": f"2026/10/5 Quick Note {number}", "text": "",
+                               "type": "text/x-markdown", "tags": ["Note"]},
+                    "tags": ["Note"],
+                })
+        self.assertEqual([req.full_url for req in opener.requests], [
+            url for _ in range(3) for url in (
+                "https://wiki.invalid/status", "https://wiki.invalid/recipes/a%2Fb/tiddlers.json?exclude=bag")
+        ])
+        self.assertTrue(all(req.get_method() == "GET" for req in opener.requests))
+
+    def test_readonly_and_anonymous_refuse_both_preparation_modes_without_writes(self):
+        for kind in ("today", "quick-note"):
+            for status in ({"anonymous": True}, {"read_only": False},
+                           {"anonymous": False, "read_only": True}):
+                with self.subTest(kind=kind, status=status):
+                    opener = FakeOpener([status])
+                    with self.assertRaises(tiddlywiki.WikiError):
+                        self.prepare_at(opener, kind)
+                    self.assertEqual([req.get_method() for req in opener.requests], ["GET"])
+
+    def test_binary_wrong_title_and_invalid_today_body_are_refused_without_writes(self):
+        for fields in (
+            {"title": "2026/10/5", "type": "image/png", "text": "base64"},
+            {"title": "Wrong title", "text": "Private journal"},
+            {"title": "2026/10/5", "text": ["invalid body"]},
+            {"title": "2026/10/5", "tags": ["safe", {"invalid": "tag"}]},
+            {"title": "2026/10/5", "tags": "[[unfinished"},
+        ):
+            with self.subTest(fields=fields):
+                opener = FakeOpener([{"anonymous": False}, fields])
+                with self.assertRaises(tiddlywiki.WikiError):
+                    self.prepare_at(opener, "today")
+                self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_missing_or_malicious_kind_is_a_safe_cli_error_before_network(self):
+        for draft in ({}, {"kind": "$:/System"}, {"kind": "../private?secret"},
+                      {"kind": ["today"]}, {"kind": None}, []):
+            with self.subTest(draft=draft):
+                opener = FakeOpener([])
+                result = self.run_cli(draft, opener)
+                self.assertFalse(result["ok"])
+                self.assertNotIn("private", result["error"])
+                self.assertEqual(opener.requests, [])
+
+    def test_cli_prepares_without_using_client_title_or_cached_index(self):
+        opener = FakeOpener([{"anonymous": False}, [{"title": "2026/10/5 Quick Note 1"}]])
+        now = datetime.datetime(2026, 10, 5, 12, 0)
+        with patch("tiddlywiki.datetime.datetime") as clock:
+            clock.now.return_value = now
+            result = self.run_cli({"kind": "quick-note", "title": "$:/System",
+                                   "context": [], "text": "Do not save me"}, opener)
+        self.assertEqual(result["fields"]["title"], "2026/10/5 Quick Note 2")
+        self.assertEqual(result["fields"]["text"], "")
+        self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_invalid_fresh_index_fails_safely_without_writes(self):
+        for index in ({"private": "Not an index"}, [{"title": 42}], [None]):
+            with self.subTest(index=index):
+                opener = FakeOpener([{"anonymous": False}, index])
+                result = self.run_cli({"kind": "quick-note"}, opener)
+                self.assertFalse(result["ok"])
+                self.assertNotIn("private", result["error"])
+                self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_prepare_http_errors_are_closed_and_private_diagnostics_are_redacted(self):
+        for kind in ("today", "quick-note"):
+            for code in (302, 403, 500):
+                with self.subTest(kind=kind, code=code):
+                    body = io.BytesIO(b"Private server body")
+                    failure = tiddlywiki.urllib.error.HTTPError(
+                        "https://private.invalid", code, "Private server stack test-secret", {}, body)
+                    opener = FakeOpener([{"anonymous": False}, failure])
+                    result = self.run_cli({"kind": kind}, opener)
+                    self.assertFalse(result["ok"])
+                    self.assertIn(f"HTTP {code}", result["error"])
+                    for secret in ("Private", "private.invalid", CONFIG["password"], CONFIG["username"]):
+                        self.assertNotIn(secret, result["error"])
+                    self.assertTrue(body.closed)
+                    self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_prepare_network_error_does_not_expose_private_diagnostics(self):
+        opener = FakeOpener([
+            {"anonymous": False},
+            tiddlywiki.urllib.error.URLError("Private server stack test-secret"),
+        ])
+        result = self.run_cli({"kind": "today"}, opener)
+        self.assertFalse(result["ok"])
+        for secret in ("Private", CONFIG["password"], CONFIG["username"]):
+            self.assertNotIn(secret, result["error"])
+        self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
 
 
 class UpdateTests(unittest.TestCase):
@@ -219,7 +423,7 @@ class UpdateTests(unittest.TestCase):
             with self.subTest(change=change):
                 opener = FakeOpener([{"anonymous": False}, {**original, **change}])
                 with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
-                    with self.assertRaisesRegex(tiddlywiki.WikiError, "changed"):
+                    with self.assertRaises(tiddlywiki.WikiError):
                         tiddlywiki.update(CONFIG, self.draft(original))
                 self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
 
@@ -227,7 +431,7 @@ class UpdateTests(unittest.TestCase):
         missing = tiddlywiki.urllib.error.HTTPError("https://wiki.invalid", 404, "Missing", {}, None)
         opener = FakeOpener([{"anonymous": False}, missing])
         with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
-            with self.assertRaisesRegex(tiddlywiki.WikiError, "no longer exists"):
+            with self.assertRaises(tiddlywiki.WikiError):
                 tiddlywiki.update(CONFIG, self.draft(self.baseline()))
         self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
 

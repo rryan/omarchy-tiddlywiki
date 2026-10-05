@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Window
-import Quickshell
 import Quickshell.Io
 import qs.Commons
 
@@ -25,6 +23,7 @@ Item {
         return mime === "text/x-markdown" || mime === "text/markdown"
     }
     readonly property bool previewVisible: active && markdown
+    visible: previewVisible
 
     function schedule() {
         debounce.stop()
@@ -71,13 +70,7 @@ Item {
         _loading = false
     }
 
-    onPreviewVisibleChanged: {
-        schedule()
-        if (previewVisible) Qt.callLater(function() {
-            // Opening a preview must not steal the editor's typing focus.
-            if (root.previewVisible && root.Window.window) root.Window.window.requestActivate()
-        })
-    }
+    onPreviewVisibleChanged: schedule()
     onDraftTitleChanged: schedule()
     onDraftTextChanged: schedule()
     onDraftTagsChanged: schedule()
@@ -116,18 +109,9 @@ Item {
         }
     }
 
-    FloatingWindow {
-        id: previewWindow
-        objectName: "tiddlywikiMarkdownPreviewWindow"
-        visible: root.previewVisible
-        title: "Markdown preview — TiddlyWiki"
-        implicitWidth: 720
-        implicitHeight: 620
-        minimumSize: Qt.size(360, 280)
-        color: Color.menu.background
-        ColumnLayout {
+    ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 24
+            anchors.margins: 0
             spacing: 12
             Label {
                 Layout.fillWidth: true
@@ -191,11 +175,15 @@ Item {
                     selectedTextColor: Color.menu.selectedText
                     font.pixelSize: 16
                     onCursorPositionChanged: if (activeFocus) scroller.ensureCursorVisible()
+                    Keys.onPressed: function(event) {
+                        if (!activeFocus) return
+                        if (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp) {
+                            scroller.scrollViewport(event.key === Qt.Key_PageDown ? 1 : -1, true)
+                            event.accepted = true
+                        }
+                    }
                 }
             }
             FontMetrics { id: metrics; font: previewText.font }
-            Shortcut { sequence: "PgDown"; enabled: root.previewVisible; onActivated: scroller.scrollViewport(1, true) }
-            Shortcut { sequence: "PgUp"; enabled: root.previewVisible; onActivated: scroller.scrollViewport(-1, true) }
         }
-    }
 }
