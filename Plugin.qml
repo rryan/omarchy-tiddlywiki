@@ -80,7 +80,6 @@ Item {
 
     function prepare(kind) {
         search.back()
-        search.ensureIndex()
         _mode = "prepare"
         _prepareError = ""
         _prepareProcess = prepareComponent.createObject(root, {
@@ -168,7 +167,12 @@ Item {
                 visible: root._mode === "create" || root._mode === "edit"
                 context: search.context
                 onSavedTiddler: function(title) { root.showSaved(title) }
-                onPreparedOpened: function(mode, title) { root._mode = mode }
+                onPreparedOpened: function(mode, title) {
+                    root._mode = mode
+                    Qt.callLater(function() {
+                        if (root.opened && editor.visible) search.ensureIndex()
+                    })
+                }
                 onPreparedCancelled: root.backFromPreparation()
                 onEditOpened: root._mode = "edit"
                 onCloseRequested: {

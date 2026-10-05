@@ -25,8 +25,9 @@ Switching away from a dirty edit never silently discards it.
   tiddler. **Journal** is added without removing existing tags or metadata.
   The body receives focus with the cursor at the end, including restored drafts.
 - **Super+Shift+I** prefills a Markdown quick note tagged **Note**, titled
-  `Y/M/D Quick Note N`. A fresh server index selects the lowest unused
-  positive number for today; after saving, the next summon allocates another.
+  `Y/M/D Quick Note N`. A fresh body-free index (`exclude=bag,text`) selects
+  the lowest unused positive number for today; after saving, the next summon
+  allocates another. This uses the existing server API, with no server changes.
 
 Direct summons use `{"mode":"today"}` and `{"mode":"quick-note"}`.
 Neither shortcut writes until Save/Ctrl+Enter. Ordinary creation and unsaved
@@ -47,6 +48,10 @@ context as the view; preview rendering itself does not access credentials
 or make HTTP requests. Choosing a non-Markdown type hides the preview and
 lets the form use the full width. Preview PageUp/PageDown applies only when
 preview text has focus. Cancelled renders terminate and reap their child.
+Prepared journal/note forms open before a cold full-context index starts loading.
+The initial preview uses any cached context; transclusions may be incomplete
+until the background index arrives, then the preview rerenders without replacing
+the draft. Full-text search still fetches bodies when needed.
 
 ## Search and read
 

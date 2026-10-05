@@ -294,7 +294,7 @@ class PrepareTests(unittest.TestCase):
                 })
         self.assertEqual([req.full_url for req in opener.requests], [
             url for _ in range(3) for url in (
-                "https://wiki.invalid/status", "https://wiki.invalid/recipes/a%2Fb/tiddlers.json?exclude=bag")
+                "https://wiki.invalid/status", "https://wiki.invalid/recipes/a%2Fb/tiddlers.json?exclude=bag,text")
         ])
         self.assertTrue(all(req.get_method() == "GET" for req in opener.requests))
 

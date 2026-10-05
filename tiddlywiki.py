@@ -230,7 +230,7 @@ def prepare(config, draft):
             if not is_text_type(fields["type"]) or not isinstance(raw_fields.get("text", ""), str):
                 raise WikiError("This editor only edits text tiddlers.")
     else:
-        with request(base + "/tiddlers.json?exclude=bag") as response:
+        with request(base + "/tiddlers.json?exclude=bag,text") as response:
             tiddlers = json.load(response)
         if not isinstance(tiddlers, list):
             raise WikiError("The wiki returned an invalid search index.")
