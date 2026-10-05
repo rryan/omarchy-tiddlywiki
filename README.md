@@ -1,6 +1,7 @@
 # TiddlyWiki for Omarchy
 
-Native Quickshell tiddler editor and read-only search. Create from the bar's pencil button or:
+Native Quickshell app with one main window for search, view, creation, and editing.
+Create with **Super+Shift+P**, the bar's pencil button, or:
 
 ```sh
 omarchy-shell shell summon rryan.tiddlywiki '{}'
@@ -9,10 +10,21 @@ omarchy-shell shell summon rryan.tiddlywiki '{}'
 Title and body come first, followed by tags and editable content type
 (default `text/x-markdown`). Tab moves from title to body, then tags.
 Tags use TiddlyWiki list syntax: `post [[multi word tag]]`.
-Ctrl+Enter saves and dismisses the editor after success. The Save button
-saves and keeps the editor open for another post. Errors keep the dialog
-open and preserve the draft. Escape/Close hides the editor without clearing
-the draft. Successful saves clear the fields; drafts do not survive shell reloads.
+**Ctrl+Enter** and **Save** both save and replace the editor with the saved
+tiddler's view in the same window. Errors retain the draft. **Back/Escape**
+from editing returns to the view; from creation it hides the app. Creation
+and editing drafts are retained independently until saved or the shell reloads.
+Switching away from a dirty edit never silently discards it.
+
+### Live Markdown preview
+
+A separate preview window opens automatically for `text/x-markdown` or
+`text/markdown`, including MIME parameters and case variants. It updates
+200 ms after typing pauses, without moving typing focus out of the editor.
+The preview uses the same trusted local renderer and cached transclusion
+context as the view; preview rendering itself does not access credentials
+or make HTTP requests. Leaving the editor or choosing a non-Markdown type
+closes it. Cancelled preview requests terminate and reap their renderer child.
 
 ## Search and read
 
@@ -35,10 +47,14 @@ while typing; a failed refresh keeps cached results searchable.
 - **Tab** focuses results, where **j/k** also select the next/previous result.
 - **Enter** opens the selected result from either the query or results.
 - **Shift+Tab** returns to the query.
-- **Escape** closes the reader first, then the search window.
+- Selecting a result replaces the entire search pane with its view.
+- The top-left **Back arrow** or **Escape** restores the query, selection,
+  and results viewport. Escape from search hides the app.
+- **e** or **Edit** in view opens the existing tiddler for editing.
+  Titles are immutable; read-only accounts and non-text attachments cannot edit.
 
-The reader is modal, selectable, and read-only. It fetches fresh JSON fields
-and renders only the body locally using pinned TiddlyWiki 5.3.6 core and
+The view is selectable and renders only the freshly fetched JSON tiddler body
+locally using pinned TiddlyWiki 5.3.6 core and
 Markdown support. Ordinary transclusions use the cached in-memory index;
 the freshly fetched selected tiddler overrides its cached copy. Titles with
 slashes, spaces, `@`, `%`, or Unicode do not need an HTML route or proxy change.
@@ -105,19 +121,20 @@ hl.unbind("SUPER + SHIFT + O") -- Previously Obsidian.
 o.bind("SUPER + SHIFT + O", "Search TiddlyWiki tiddlers", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"search\"}'")
 ```
 
-For centered hovering windows that do not rearrange tiled windows, add
-these rules to `~/.config/hypr/hyprland.lua`:
+For a centered floating main window and a preview near the top-right corner,
+use these rules in `~/.config/hypr/hyprland.lua`:
 
 ```lua
-o.window({ class = "^org\\.quickshell$", title = "^Create tiddler — TiddlyWiki$" }, {
-  float = true,
-  center = true,
-  size = { 780, 620 },
-})
-o.window({ class = "^org\\.quickshell$", title = "^Search tiddlers — TiddlyWiki$" }, {
+o.window({ class = "^org\\.quickshell$", title = "^TiddlyWiki$" }, {
   float = true,
   center = true,
   size = { 820, 680 },
+})
+o.window({ class = "^org\\.quickshell$", title = "^Markdown preview — TiddlyWiki$" }, {
+  float = true,
+  size = { 720, 620 },
+  move = { "monitor_w-window_w-24", "40" },
+  no_initial_focus = true,
 })
 ```
 
@@ -125,16 +142,25 @@ Then run `hyprctl reload` and `hyprctl configerrors`.
 
 ## Save safety
 
-The client reads `/status` to authenticate and discover the recipe, checks
-that the title does not exist, and PUTs exactly one tiddler with TiddlyWiki's
-`X-Requested-With` header. Existing titles and `$:/` system titles are
-refused. No delete, bulk write, automatic retry, or background posting.
+Creation authenticates through `/status`, checks that the title does not
+exist, and PUTs exactly one tiddler with TiddlyWiki's `X-Requested-With`
+header and `If-None-Match: *`. Existing titles are never intentionally
+overwritten by creation; `$:/` system titles are refused in both modes.
+No delete, bulk write, automatic retry, or background posting.
 
-The PUT includes `If-None-Match: *`, but TiddlyWiki servers may not enforce
-conditional writes. The existence check is not an atomic create guarantee:
-a concurrent writer creating the identical title between GET and PUT could
-be overwritten. Choose distinct post titles. After an ambiguous network
-failure, check the wiki before retrying.
+Editing fetches the current fields again and compares them with the complete
+snapshot opened in the editor before PUT. Already-observed changes or deletion
+stop the save and retain the draft. Unedited custom fields, creator, and
+creation timestamp survive updates. Returning to the view fetches fresh fields;
+reopening a changed tiddler requires confirmation before discarding its retained edit.
+Cancelling a same-tiddler reload resumes the retained edit without rebasing
+it, so copying a draft remains possible without silently overwriting external changes.
+
+TiddlyWiki 5.3.6 does not provide atomic compare-and-swap on these PUT routes.
+A writer between the check and PUT can still be overwritten, or a concurrent
+deletion can be undone by an update. Creation's conditional header may also
+be unenforced. Choose distinct titles and avoid concurrent edits. After any
+ambiguous save failure, check the wiki before retrying.
 
 The wiki needs the Markdown plugin to render `text/x-markdown` posts.
 Save smoke checks used a local server. A desktop-input smoke interaction

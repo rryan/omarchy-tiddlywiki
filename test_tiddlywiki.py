@@ -1,3 +1,4 @@
+import datetime
 import io
 import json
 import unittest
@@ -69,6 +70,7 @@ class ClientTests(unittest.TestCase):
                                       "space": {"recipe": "a/b"}}, fields])
                 with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
                     result = tiddlywiki.read_tiddler(CONFIG, {"title": title, "context": context})
+                self.assertFalse(result["editable"])
                 self.assertIn("<h1>Fresh heading</h1>", result["html"])
                 self.assertIn("<strong>Nested leaf content</strong>", result["html"])
                 self.assertNotIn("Stale cached source", result["html"])
@@ -81,7 +83,7 @@ class ClientTests(unittest.TestCase):
                                     for request in opener.requests))
 
     def test_markdown_types_render_formatting_without_active_attributes(self):
-        for content_type in ("text/x-markdown", "text/markdown"):
+        for content_type in ("text/x-markdown", "text/markdown", "Text/Markdown; charset=UTF-8"):
             with self.subTest(content_type=content_type):
                 opener = FakeOpener([
                     {"anonymous": False},
@@ -91,6 +93,7 @@ class ClientTests(unittest.TestCase):
                 ])
                 with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
                     result = tiddlywiki.read_tiddler(CONFIG, {"title": "Markdown"})
+                self.assertTrue(result["editable"])
                 for content in ("<h1>Markdown heading</h1>", "<strong>Strong text</strong>", "Visible link"):
                     self.assertIn(content, result["html"])
                 for excluded in ("remote.invalid", "href=", "src=", "onerror", "<img"):
@@ -173,6 +176,150 @@ class ClientTests(unittest.TestCase):
             build.assert_not_called()
 
 
+class UpdateTests(unittest.TestCase):
+    def baseline(self):
+        return {"title": "Note / café", "text": "Old body", "type": "text/plain",
+                "tags": ["old"], "created": "20260102030405000",
+                "creator": "Original author", "modified": "20260103030405000",
+                "modifier": "Earlier editor", "custom-field": "Keep me",
+                "custom-list": ["first", "second"]}
+
+    def draft(self, original):
+        return {"title": original["title"], "original": original,
+                "text": "New body", "type": "text/markdown", "tags": "new [[two words]] new"}
+
+    def test_update_preserves_metadata_and_changes_only_editable_and_modification_fields(self):
+        original = self.baseline()
+        server = {**original, "tags": "old"}
+        opener = FakeOpener([
+            {"anonymous": False, "username": "Current editor", "space": {"recipe": "a/b"}},
+            server, {},
+        ])
+        fixed = datetime.datetime(2026, 10, 4, 12, 13, 14, 123000, tzinfo=datetime.timezone.utc)
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+            with patch("tiddlywiki.datetime.datetime") as clock:
+                clock.now.return_value = fixed
+                result = tiddlywiki.update(CONFIG, self.draft(original))
+        self.assertEqual(result, {"ok": True, "title": original["title"]})
+        self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET", "PUT"])
+        saved = json.loads(opener.requests[-1].data)
+        self.assertEqual(saved, {
+            **original, "text": "New body", "type": "text/markdown", "tags": ["new", "two words"],
+            "modified": "20261004121314123", "modifier": "Current editor",
+        })
+        self.assertEqual(opener.requests[-1].full_url,
+                         "https://wiki.invalid/recipes/a%2Fb/tiddlers/Note%20%2F%20caf%C3%A9")
+        self.assertEqual(original, self.baseline())
+
+    def test_changes_in_any_original_field_prevent_put(self):
+        original = self.baseline()
+        for change in ({"text": "Other writer"}, {"tags": ["other"]},
+                       {"type": "text/markdown"}, {"custom-field": "Changed"},
+                       {"created": "20260201000000000"}, {"new-field": "Added"}):
+            with self.subTest(change=change):
+                opener = FakeOpener([{"anonymous": False}, {**original, **change}])
+                with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+                    with self.assertRaisesRegex(tiddlywiki.WikiError, "changed"):
+                        tiddlywiki.update(CONFIG, self.draft(original))
+                self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_missing_tiddler_does_not_recreate_it(self):
+        missing = tiddlywiki.urllib.error.HTTPError("https://wiki.invalid", 404, "Missing", {}, None)
+        opener = FakeOpener([{"anonymous": False}, missing])
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(tiddlywiki.WikiError, "no longer exists"):
+                tiddlywiki.update(CONFIG, self.draft(self.baseline()))
+        self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
+
+    def test_rename_system_binary_and_invalid_body_are_refused_before_network(self):
+        original = self.baseline()
+        cases = [
+            {**self.draft(original), "title": "Renamed"},
+            self.draft({**original, "title": "$:/System"}),
+            self.draft({**original, "type": "image/png", "text": ""}),
+            {**self.draft(original), "type": "image/png"},
+            {**self.draft(original), "text": ["not text"]},
+            {**self.draft(original), "tags": "[[unfinished"},
+        ]
+        for draft in cases:
+            with self.subTest(draft=draft):
+                with patch("tiddlywiki.urllib.request.build_opener") as build:
+                    with self.assertRaises(tiddlywiki.WikiError):
+                        tiddlywiki.update(CONFIG, draft)
+                    build.assert_not_called()
+
+    def test_readonly_anonymous_and_fresh_binary_are_refused_without_put(self):
+        original = self.baseline()
+        for responses in (
+            [{"anonymous": False, "read_only": True}],
+            [{"anonymous": True}],
+            [{"anonymous": False}, {**original, "type": "image/png", "text": "base64"}],
+            [{"anonymous": False}, {**original, "text": {"invalid": "body"}}],
+            [{"anonymous": False}, {**original, "title": "Wrong title"}],
+        ):
+            with self.subTest(responses=responses):
+                opener = FakeOpener(responses)
+                with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+                    with self.assertRaises(tiddlywiki.WikiError):
+                        tiddlywiki.update(CONFIG, self.draft(original))
+                self.assertTrue(all(req.get_method() == "GET" for req in opener.requests))
+
+    def test_update_network_failure_does_not_expose_private_diagnostics(self):
+        original = self.baseline()
+        for failure in (
+            tiddlywiki.urllib.error.URLError("Private server stack test-secret"),
+            tiddlywiki.urllib.error.HTTPError("https://private.invalid", 500, "Private server stack", {}, None),
+        ):
+            with self.subTest(failure=failure):
+                opener = FakeOpener([{"anonymous": False}, original, failure])
+                stdout = io.StringIO()
+                with patch("tiddlywiki.urllib.request.build_opener", return_value=opener), \
+                        patch("builtins.open", return_value=io.StringIO(json.dumps(CONFIG))), \
+                        patch("sys.argv", ["tiddlywiki.py", "update"]), \
+                        patch("sys.stdin", io.StringIO(json.dumps(self.draft(original)) + "\n")), \
+                        patch("sys.stdout", stdout):
+                    tiddlywiki.main()
+                result = json.loads(stdout.getvalue())
+                self.assertFalse(result["ok"])
+                for secret in ("Private server stack", "private.invalid", CONFIG["password"], CONFIG["username"]):
+                    self.assertNotIn(secret, result["error"])
+                self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET", "PUT"])
+
+
+class PreviewTests(unittest.TestCase):
+    def test_offline_cli_renders_untitled_markdown_without_config_or_http(self):
+        for content_type in ("text/x-markdown", "text/markdown", "Text/Markdown; charset=UTF-8"):
+            with self.subTest(content_type=content_type):
+                draft = {
+                    "title": "", "type": content_type, "tags": "[[draft tag]]",
+                    "text": "# Draft heading\n\n**Fresh draft** and [Link](https://remote.invalid)\n\n"
+                            '<img src="https://remote.invalid/pic" onerror="active()">',
+                    "context": [{"title": "Omarchy Markdown preview", "text": "Cached content",
+                                 "type": "text/markdown", "tags": []}],
+                }
+                stdout = io.StringIO()
+                with patch("builtins.open", side_effect=AssertionError("Private config opened")), \
+                        patch("tiddlywiki.urllib.request.build_opener", side_effect=AssertionError("HTTP attempted")), \
+                        patch("sys.argv", ["tiddlywiki.py", "preview"]), \
+                        patch("sys.stdin", io.StringIO(json.dumps(draft) + "\n")), \
+                        patch("sys.stdout", stdout):
+                    tiddlywiki.main()
+                result = json.loads(stdout.getvalue())
+                self.assertTrue(result["ok"], result)
+                for content in ("<h1>Draft heading</h1>", "<strong>Fresh draft</strong>", "Link"):
+                    self.assertIn(content, result["html"])
+                for excluded in ("Cached content", "remote.invalid", "src=", "href=", "onerror", "<img"):
+                    self.assertNotIn(excluded, result["html"])
+
+    def test_preview_refuses_nonmarkdown_system_and_invalid_context(self):
+        for change in ({"type": "text/plain"}, {"type": "image/png"}, {"title": "$:/System"},
+                       {"context": {}}, {"text": []}, {"tags": "[[unfinished"}):
+            with self.subTest(change=change):
+                draft = {"title": "Draft", "text": "**Body**", "type": "text/markdown", "tags": "", **change}
+                with self.assertRaises(tiddlywiki.WikiError):
+                    tiddlywiki.preview(draft)
+
+
 class SanitizerTests(unittest.TestCase):
     def test_missing_or_truncated_body_is_a_controlled_sanitizer_error(self):
         for markup in (
@@ -243,6 +390,7 @@ class SanitizerTests(unittest.TestCase):
         ])
         with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
             result = tiddlywiki.read_tiddler(CONFIG, {"title": "Photo"})
+        self.assertFalse(result["editable"])
         self.assertEqual(result["tiddler"]["text"], "")
         self.assertIn("no static text preview", result["html"])
         for excluded in ("base64", "payload", "src=", "<img", "Photo title"):

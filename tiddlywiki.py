@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create, search, and read tiddlers via authenticated API; JSON stdin/stdout."""
+"""Create, update, search, read, and locally preview tiddlers; JSON stdin/stdout."""
 import base64
 import datetime
 import json
@@ -7,6 +7,7 @@ import html
 from html.parser import HTMLParser
 import os
 import re
+import signal
 import subprocess
 import sys
 import urllib.error
@@ -64,6 +65,7 @@ def create(config, draft):
     except urllib.error.HTTPError as error:
         if error.code != 404:
             raise
+        error.close()
     else:
         raise WikiError("A tiddler with this title already exists. Choose a different title; nothing was overwritten.")
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S%f")[:17]
@@ -131,6 +133,61 @@ def normalize_tiddler(tiddler):
     text = fields.get("text", "")
     fields["text"] = text if isinstance(text, str) and is_text_type(content_type) else ""
     return fields
+
+
+def editable_body(draft):
+    content_type = draft.get("type", "")
+    text = draft.get("text", "")
+    tags = draft.get("tags", "")
+    if not isinstance(content_type, str) or not content_type.strip():
+        raise WikiError("Enter a content type.")
+    content_type = content_type.strip()
+    if not is_text_type(content_type):
+        raise WikiError("This editor only saves text tiddlers.")
+    if not isinstance(text, str) or not isinstance(tags, str):
+        raise WikiError("Expected text and tags as strings.")
+    return {"text": text, "type": content_type, "tags": parse_tags(tags)}
+
+
+def update(config, draft):
+    original = normalize_tiddler(draft.get("original"))
+    title = draft.get("title")
+    if not isinstance(title, str) or not title:
+        raise WikiError("Choose a tiddler to edit.")
+    if title != original["title"]:
+        raise WikiError("A tiddler's title cannot be changed while editing.")
+    if title.startswith("$:/"):
+        raise WikiError("This editor does not edit $:/ system tiddlers.")
+    if not is_text_type(original["type"]):
+        raise WikiError("This editor only edits text tiddlers.")
+    body = editable_body(draft)
+    request, status, recipe = connect(config, write=True)
+    path = "/recipes/" + urllib.parse.quote(recipe, safe="") + "/tiddlers/" + urllib.parse.quote(title, safe="")
+    try:
+        with request(path) as response:
+            raw_fields = json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            error.close()
+            raise WikiError("The tiddler no longer exists. Nothing was saved.") from None
+        raise
+    fields = normalize_tiddler(raw_fields)
+    if fields["title"] != title:
+        raise WikiError("The wiki returned a different tiddler. Nothing was saved.")
+    if not is_text_type(fields["type"]) or not isinstance(raw_fields.get("text", ""), str):
+        raise WikiError("This editor only edits text tiddlers.")
+    if fields != original:
+        raise WikiError("The tiddler changed since it was opened. Reopen it before editing; nothing was saved.")
+    # TW 5.3.6 has no atomic compare-and-swap for this endpoint. This protects
+    # against already-observed changes, not writes between this GET and PUT.
+    fields.update(body)
+    fields["modified"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S%f")[:17]
+    fields["modifier"] = status.get("username", config["username"])
+    with request(path, "PUT", json.dumps(fields, ensure_ascii=False).encode(),
+                 {"Content-Type": "application/json"}) as response:
+        if response.status not in (200, 201, 204):
+            raise WikiError("Unexpected save response. Check the wiki before trying again.")
+    return {"ok": True, "title": title}
 
 
 def index(config):
@@ -311,7 +368,7 @@ def read_tiddler(config, draft):
         raise WikiError("Choose a tiddler to read.")
     if title.startswith("$:/"):
         raise WikiError("This reader does not open $:/ system tiddlers.")
-    request, _, recipe = connect(config)
+    request, status, recipe = connect(config)
     encoded = urllib.parse.quote(title, safe="")
     path = "/recipes/" + urllib.parse.quote(recipe, safe="") + "/tiddlers/" + encoded
     with request(path) as response:
@@ -322,29 +379,70 @@ def read_tiddler(config, draft):
     rendered = sanitize_tiddler_html(markup)
     if not is_text_type(fields["type"]) and not html.unescape(re.sub(r"<[^>]*>", "", rendered)).strip():
         rendered = "<p>This non-text tiddler has no static text preview.</p>"
-    return {"ok": True, "tiddler": fields, "html": rendered}
+    return {"ok": True, "tiddler": fields, "html": rendered,
+            "editable": is_text_type(fields["type"]) and not bool(status.get("read_only"))}
+
+
+def preview(draft):
+    fields = editable_body(draft)
+    if fields["type"].split(";", 1)[0].strip().lower() not in ("text/x-markdown", "text/markdown"):
+        raise WikiError("Live preview requires a Markdown content type.")
+    title = draft.get("title", "")
+    context = draft.get("context", [])
+    if not isinstance(title, str) or not isinstance(context, list):
+        raise WikiError("Invalid local preview input.")
+    if title.startswith("$:/"):
+        raise WikiError("This editor does not preview $:/ system tiddlers.")
+    if not title.strip():
+        # Do not shadow a cached ordinary tiddler when previewing an untitled draft.
+        titles = {item.get("title") for item in context
+                  if isinstance(item, dict) and isinstance(item.get("title"), str)}
+        title = "Omarchy Markdown preview"
+        while title in titles:
+            title += "_"
+    fields["title"] = title
+    return {"ok": True, "html": sanitize_tiddler_html(render_locally(fields, context))}
+
+
+def _cancel_render(signum, _frame):
+    # Raising through subprocess.run kills and reaps its renderer child.
+    raise SystemExit(128 + signum)
 
 
 def main():
     action = sys.argv[1] if len(sys.argv) == 2 else "create" if len(sys.argv) == 1 else None
     try:
-        if action not in ("create", "index", "read"):
-            raise WikiError("Use no action to create, or use index or read.")
-        config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omarchy", "tiddlywiki.json")
-        with open(config_path) as source:
-            config = json.load(source)
+        if action not in ("create", "update", "index", "read", "preview"):
+            raise WikiError("Use create, update, index, read, or preview.")
+        if action in ("read", "preview"):
+            signal.signal(signal.SIGTERM, _cancel_render)
         draft = json.loads(sys.stdin.readline())
         if not isinstance(draft, dict):
             raise WikiError("Expected a JSON object.")
-        result = index(config) if action == "index" else read_tiddler(config, draft) if action == "read" else create(config, draft)
+        if action == "preview":
+            # Offline drafts must never open the private configuration or HTTP.
+            result = preview(draft)
+        else:
+            config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omarchy", "tiddlywiki.json")
+            with open(config_path) as source:
+                config = json.load(source)
+            if action == "index":
+                result = index(config)
+            elif action == "read":
+                result = read_tiddler(config, draft)
+            elif action == "update":
+                result = update(config, draft)
+            else:
+                result = create(config, draft)
     except urllib.error.HTTPError as error:
+        error.close()
         message = "Wiki returned HTTP %s. Check credentials and permissions." % error.code
-        if action == "create":
+        if action in ("create", "update"):
             message += " If saving had started, check the wiki before retrying."
         result = {"ok": False, "error": message}
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         message = "Could not complete the request (%s)." % type(error).__name__
-        if action == "create":
+        if action in ("create", "update"):
             message += " Draft retained. Check the wiki before retrying a save."
         result = {"ok": False, "error": message}
     except WikiError as error:

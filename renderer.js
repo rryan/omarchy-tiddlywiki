@@ -88,6 +88,18 @@ async function render(request) {
             return {ok: false, error: DEPENDENCY_FAILURE};
         }
 
+        function addDataTiddler(fields) {
+            const type = fields.type;
+            if (typeof type === "string") {
+                const mime = type.split(";", 1)[0].trim().toLowerCase();
+                // Select the trusted MIME parser without changing source metadata.
+                if (mime !== type && Object.prototype.hasOwnProperty.call(tw.Wiki.parsers, mime)) {
+                    tw.Wiki.parsers[type] = tw.Wiki.parsers[mime];
+                }
+            }
+            tw.wiki.addTiddler(new tw.Tiddler(fields));
+        }
+
         // Protect executable bundled resources; ordinary shadow content such as
         // GettingStarted may legitimately be overridden by the remote wiki.
         const trustedTitles = new Set([...tw.wiki.allTitles(), ...tw.wiki.allShadowTitles()]
@@ -101,12 +113,12 @@ async function render(request) {
         for (const source of request.context || []) {
             const fields = ordinaryFields(source);
             if (fields && !trustedTitles.has(fields.title)) {
-                tw.wiki.addTiddler(new tw.Tiddler(fields));
+                addDataTiddler(fields);
             }
         }
         // Exact title lookup uses a variable, not a filter expression or URL.
         // The fresh selected tiddler wins over any cached contextual copy.
-        tw.wiki.addTiddler(new tw.Tiddler(target));
+        addDataTiddler(target);
         // Use the trusted default body template directly, with the same global
         // macro scope and static variables as the bundled server HTML template.
         // No remote template field or tagged ViewTemplate cascade selects it.
