@@ -52,6 +52,11 @@ while typing; a failed refresh keeps cached results searchable.
   and results viewport. Escape from search hides the app.
 - **e** or **Edit** in view opens the existing tiddler for editing.
   Titles are immutable; read-only accounts and non-text attachments cannot edit.
+- **o** opens the viewed tiddler, or the selected result while the list has
+  focus, in the default browser. It remains ordinary text in the query/editor.
+  Browser navigation uses the wiki root and an encoded TiddlyWiki permalink,
+  not the server's per-tiddler HTML route. Browser authentication is separate
+  from this app's API credentials; no credentials are included in the URL.
 
 Editable inputs (query, title, body, tags, and content type) use Emacs-style bindings:
 

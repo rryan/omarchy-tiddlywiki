@@ -198,7 +198,8 @@ def index(config):
     if not isinstance(tiddlers, list):
         raise WikiError("The wiki returned an invalid search index.")
     fields = [normalize_tiddler(tiddler) for tiddler in tiddlers]
-    return {"ok": True, "tiddlers": [item for item in fields if not item["title"].startswith("$:/")]}
+    return {"ok": True, "tiddlers": [item for item in fields if not item["title"].startswith("$:/")],
+            "wikiUrl": config["url"].rstrip("/") + "/"}
 
 
 class StaticRichText(HTMLParser):
@@ -380,7 +381,8 @@ def read_tiddler(config, draft):
     if not is_text_type(fields["type"]) and not html.unescape(re.sub(r"<[^>]*>", "", rendered)).strip():
         rendered = "<p>This non-text tiddler has no static text preview.</p>"
     return {"ok": True, "tiddler": fields, "html": rendered,
-            "editable": is_text_type(fields["type"]) and not bool(status.get("read_only"))}
+            "editable": is_text_type(fields["type"]) and not bool(status.get("read_only")),
+            "wikiUrl": config["url"].rstrip("/") + "/"}
 
 
 def preview(draft):

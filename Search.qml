@@ -23,6 +23,7 @@ Item {
     property bool _searchPending: false
     property string _rankedQuery: ""
     property string _indexError: ""
+    property string _wikiUrl: ""
     property int _indexGeneration: 0
     property int _readGeneration: 0
     property var _indexProcess: null
@@ -179,6 +180,10 @@ Item {
         if (!selectedTitle || loading || ranking || _rankedQuery !== queryField.text || readerVisible) return
         openTiddler(selectedTitle)
     }
+    function openBrowser(title) {
+        if (_wikiUrl && title) Qt.openUrlExternally(_wikiUrl + "#" + encodeURIComponent(title))
+    }
+
 
     function openTiddler(title) {
         if (typeof title !== "string" || !title) return
@@ -253,6 +258,7 @@ Item {
             fail(action, result && result.error ? String(result.error) : "The wiki request failed.")
             return
         }
+        if (typeof result.wikiUrl === "string") _wikiUrl = result.wikiUrl
         if (action === "index") {
             if (!Array.isArray(result.tiddlers)) {
                 fail(action, "The wiki client did not return a tiddler index.")
@@ -347,6 +353,11 @@ Item {
         enabled: root.opened && root.visible && root.enabled && root.readerVisible && root.readerEditable
         onActivated: root.editCurrent()
     }
+    Shortcut {
+        sequence: "O"
+        enabled: root.opened && root.visible && root.enabled && root.readerVisible && !!root._wikiUrl
+        onActivated: root.openBrowser(root.readerTitle)
+    }
 
     StackLayout {
         anchors.fill: parent
@@ -422,6 +433,9 @@ Item {
                         } else if (event.modifiers === Qt.NoModifier
                                 && (event.key === Qt.Key_Up || event.key === Qt.Key_K)) {
                             root.moveSelection(-1)
+                        } else if (event.key === Qt.Key_O && event.modifiers === Qt.NoModifier) {
+                            if (!root.loading && !root.ranking && root._rankedQuery === queryField.text)
+                                root.openBrowser(root.selectedTitle)
                         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                             root.openSelected()
                         } else return
