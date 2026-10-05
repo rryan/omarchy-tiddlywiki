@@ -96,6 +96,8 @@ Dependencies are pinned in `package-lock.json`; installation does not run
 package scripts. After an update changes the lockfile, rerun `npm ci` in the
 installed plugin directory. Restart the shell to reload updated QML:
 `omarchy restart shell`. A shell restart discards unsaved editor drafts.
+The project `.npmrc` disables dependency command symlinks: Omarchy rejects
+symlinks inside plugin folders, and the renderer loads TiddlyWiki as a library.
 
 Create `~/.config/omarchy/tiddlywiki.json` (or the same path beneath
 `XDG_CONFIG_HOME`) with permissions **0600**:
