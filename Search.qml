@@ -413,6 +413,8 @@ Item {
                         if (event.key === Qt.Key_Backtab
                                 || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
                             queryField.forceActiveFocus()
+                        } else if (event.key === Qt.Key_Slash && event.modifiers === Qt.NoModifier) {
+                            queryField.forceActiveFocus()
                         } else if (event.modifiers === Qt.NoModifier
                                 && (event.key === Qt.Key_Down || event.key === Qt.Key_J)) {
                             root.moveSelection(1)

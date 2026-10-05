@@ -46,7 +46,7 @@ while typing; a failed refresh keeps cached results searchable.
   Focus stays in the query; ordinary **j/k** remain text input there.
 - **Tab** focuses results, where **j/k** also select the next/previous result.
 - **Enter** opens the selected result from either the query or results.
-- **Shift+Tab** returns to the query.
+- **/** or **Shift+Tab** from the results returns to the query without changing it.
 - Selecting a result replaces the entire search pane with its view.
 - The top-left **Back arrow** or **Escape** restores the query, selection,
   and results viewport. Escape from search hides the app.
