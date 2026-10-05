@@ -17,12 +17,14 @@ Item {
     property int _prepareGeneration: 0
     property var _prepareProcess: null
     property string _prepareError: ""
+    property bool _editorFromView: false
 
     function open(payloadJson) {
         var payload = {}
         try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) {}
         opened = true
         if (!editor.saving) {
+            _editorFromView = false
             cancelPreparation()
             editor.close()
             if (payload.mode === "search") {
@@ -55,6 +57,7 @@ Item {
     }
 
     function editTiddler(fields) {
+        _editorFromView = true
         if (editor.openForEdit(fields)) _mode = "edit"
     }
 
@@ -101,13 +104,6 @@ Item {
         editor.openPrepared(result)
     }
 
-    function backFromPreparation() {
-        cancelPreparation()
-        _mode = "search"
-        search.back()
-        search.ensureIndex()
-        search.focusResults()
-    }
 
     Component {
         id: prepareComponent
@@ -168,18 +164,18 @@ Item {
                 context: search.context
                 onSavedTiddler: function(title) { root.showSaved(title) }
                 onPreparedOpened: function(mode, title) {
+                    root._editorFromView = false
                     root._mode = mode
                     Qt.callLater(function() {
                         if (root.opened && editor.visible) search.ensureIndex()
                     })
                 }
-                onPreparedCancelled: root.backFromPreparation()
+                onPreparedCancelled: root.dismiss()
                 onEditOpened: root._mode = "edit"
                 onCloseRequested: {
-                    var wasEditing = editor.editing
                     var title = editor.currentDraft().title
                     editor.close()
-                    if (wasEditing) {
+                    if (root._editorFromView) {
                         root._mode = "view"
                         search.openTiddler(title)
                     } else root.dismiss()
@@ -199,11 +195,11 @@ Item {
                     verticalAlignment: Text.AlignVCenter
                     horizontalAlignment: Text.AlignHCenter
                 }
-                Button { text: "Back"; onClicked: root.backFromPreparation() }
+                Button { text: "Back"; onClicked: root.dismiss() }
                 Shortcut {
                     sequence: "Escape"
                     enabled: root.opened && root._mode === "prepare" && !editor.confirmationPending
-                    onActivated: root.backFromPreparation()
+                    onActivated: root.dismiss()
                 }
             }
         }

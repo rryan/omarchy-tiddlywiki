@@ -13,9 +13,10 @@ Tags use TiddlyWiki list syntax: `post [[multi word tag]]`.
 **Ctrl+Enter** and **Save** close the app after successfully saving a new
 tiddler, Today journal, or quick note. Regular existing edits opened from
 the view return to that view after saving. Errors keep the form and draft
-open. **Back/Escape** from editing returns to the view; from creation it
-hides the app. Creation and editing drafts are retained independently until
-saved or the shell reloads.
+open. **Back/Escape** closes directly summoned creation, Today, and quick-note
+forms (including their loading/error page). It returns from edit to view only
+when editing was entered from that view; view to search returns to its results.
+Creation and editing drafts are retained independently until saved or the shell reloads.
 Switching away from a dirty edit never silently discards it.
 
 ### Today and quick notes
@@ -28,6 +29,8 @@ Switching away from a dirty edit never silently discards it.
   `Y/M/D Quick Note N`. A fresh body-free index (`exclude=bag,text`) selects
   the lowest unused positive number for today; after saving, the next summon
   allocates another. This uses the existing server API, with no server changes.
+  The body is focused immediately; restored quick-note drafts place the cursor
+  at the end so typing appends without changing the generated title.
 
 Direct summons use `{"mode":"today"}` and `{"mode":"quick-note"}`.
 Neither shortcut writes until Save/Ctrl+Enter. Ordinary creation and unsaved

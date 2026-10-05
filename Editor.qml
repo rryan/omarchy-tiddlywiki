@@ -112,7 +112,7 @@ Item {
         }
         retainDraft()
         preparedOpened(prepared.mode, titleField.text)
-        if (prepared.kind === "today") Qt.callLater(function() {
+        Qt.callLater(function() {
             if (root.opened && root.visible) {
                 bodyField.forceActiveFocus()
                 bodyField.deselect()
