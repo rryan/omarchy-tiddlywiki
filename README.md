@@ -8,6 +8,40 @@ A native Omarchy window for searching, reading, creating, and editing your [Tidd
 - Keep separate unsaved drafts while moving between tasks.
 - Use Emacs-style text editing, or open a note in the full wiki in your browser.
 
+## Screenshots
+
+These screenshots show the native app with fictional notes. [Download the demo notes](screenshots/demo-data.json) to try the same content in your own test wiki.
+
+### Create
+
+Write a new note with tags and a live Markdown preview beside the form.
+
+![Create a new note with live Markdown preview](screenshots/create.png)
+
+### Edit
+
+Update an existing note while keeping its title and checking the preview.
+
+![Edit an existing garden project note](screenshots/edit.png)
+
+### Search
+
+Find notes by title or body text, then open a result to read or edit it.
+
+![Search results for garden across fictional notes](screenshots/search.png)
+
+### Journal
+
+Open today's dated journal with the Journal tag and the body ready for writing.
+
+![Today's journal entry with Markdown preview](screenshots/journal.png)
+
+### Quick note
+
+Jot something down immediately with an automatically numbered title and the Note tag.
+
+![Quick note with generated date and title](screenshots/quick-note.png)
+
 ## Requirements
 
 **Only [TiddlyWiki](https://tiddlywiki.com/) hosted on Node.js is supported.** A standalone HTML file, a browser-only wiki, or another hosting arrangement is not supported. Follow the official [Installing on Node.js guide](https://tiddlywiki.com/static/Installing%2520TiddlyWiki%2520on%2520Node.js.html) to set up your wiki first.
