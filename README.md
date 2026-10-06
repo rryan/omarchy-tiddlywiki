@@ -7,10 +7,11 @@ A native Omarchy window for searching, reading, creating, and editing your [Tidd
 - Open today's journal or capture automatically numbered quick notes.
 - Keep separate unsaved drafts while moving between tasks.
 - Use Emacs-style text editing, or open a note in the full wiki in your browser.
+- Text fields, buttons, and menus follow your active Omarchy theme.
 
 ## Screenshots
 
-These screenshots show the native app with fictional notes. [Download the demo notes](screenshots/demo-data.json) to try the same content in your own test wiki.
+These screenshots show fictional notes in centered windows on a clean desktop, using Tokyo Night and Omarchy's Quattro wallpaper. [Download the demo notes](screenshots/demo-data.json) to try the same content in your own test wiki.
 
 ### Create
 

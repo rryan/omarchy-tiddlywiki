@@ -298,11 +298,7 @@ Item {
                 modal: true
                 title: "Discard pending edit?"
                 standardButtons: Dialog.Discard | Dialog.Cancel
-                palette.window: Color.menu.background
-                palette.text: Color.menu.text
-                palette.windowText: Color.menu.text
-                palette.buttonText: Color.menu.text
-                palette.button: Color.menu.selectedBackground
+                palette: root.parent.palette
                 background: Rectangle {
                     color: Color.menu.background
                     border.color: Color.menu.border

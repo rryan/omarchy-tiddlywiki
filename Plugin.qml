@@ -149,9 +149,23 @@ Item {
         color: Color.menu.background
         onVisibleChanged: if (!visible && root.opened) root.dismiss()
 
-        Item {
+        Pane {
             id: surface
             anchors.fill: parent
+            padding: 0
+            palette.window: Color.menu.background
+            palette.windowText: Color.menu.text
+            palette.base: Qt.lighter(Color.menu.background, 1.18)
+            palette.alternateBase: Qt.lighter(Color.menu.background, 1.3)
+            palette.text: Color.menu.text
+            palette.button: Qt.lighter(Color.menu.background, 1.3)
+            palette.buttonText: Color.menu.text
+            palette.mid: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.22)
+            palette.dark: Qt.darker(Color.menu.background, 1.2)
+            palette.light: Qt.lighter(Color.menu.background, 1.5)
+            palette.highlight: Color.accent
+            palette.highlightedText: Color.background
+            palette.placeholderText: Qt.rgba(Color.menu.text.r, Color.menu.text.g, Color.menu.text.b, 0.5)
             Search {
                 id: search
                 anchors.fill: parent

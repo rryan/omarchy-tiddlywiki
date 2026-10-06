@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "rryan.tiddlywiki",
   "name": "TiddlyWiki",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "author": "rryan",
     "description": "Easy keyboard-driven editing of your TiddlyWiki: Search, view, and create tiddlers. Add quick notes and update your daily journal.",
   "kinds": ["bar-widget", "panel"],
