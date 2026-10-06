@@ -1,181 +1,64 @@
-# TiddlyWiki for Omarchy
+# [TiddlyWiki](https://tiddlywiki.com/) for Omarchy
 
-Native Quickshell app with one main window for search, view, creation, and editing.
-Create with **Super+Shift+P**, the bar's pencil button, or:
+A native Omarchy window for searching, reading, creating, and editing your [TiddlyWiki](https://tiddlywiki.com/) notes, with an inline live Markdown preview. For people who want quick capture and keyboard-friendly access to an existing wiki without opening a browser for every note.
 
-```sh
-omarchy-shell shell summon rryan.tiddlywiki '{}'
-```
+- Create a tiddler from the bar's pencil button.
+- Search titles and note text, read results, and edit existing notes.
+- Open today's journal or capture automatically numbered quick notes.
+- Keep separate unsaved drafts while moving between tasks.
+- Use Emacs-style text editing, or open a note in the full wiki in your browser.
 
-Title and body come first, followed by tags and editable content type
-(default `text/x-markdown`). Tab moves from title to body, then tags.
-Tags use TiddlyWiki list syntax: `post [[multi word tag]]`.
-**Ctrl+Enter** and **Save** close the app after successfully saving a new
-tiddler, Today journal, or quick note. Regular existing edits opened from
-the view return to that view after saving. Errors keep the form and draft
-open. **Back/Escape** closes directly summoned creation, Today, and quick-note
-forms (including their loading/error page). It returns from edit to view only
-when editing was entered from that view; view to search returns to its results.
-Creation and editing drafts are retained independently until saved or the shell reloads.
-Switching away from a dirty edit never silently discards it.
+## Requirements
 
-### Today and quick notes
+**Only [TiddlyWiki](https://tiddlywiki.com/) hosted on Node.js is supported.** A standalone HTML file, a browser-only wiki, or another hosting arrangement is not supported. Follow the official [Installing on Node.js guide](https://tiddlywiki.com/static/Installing%2520TiddlyWiki%2520on%2520Node.js.html) to set up your wiki first.
 
-- **Super+Shift+T** opens today's local-date title (`Y/M/D`, for example
-  `2026/10/5`) for editing if it exists, otherwise prefills a new Markdown
-  tiddler. **Journal** is added without removing existing tags or metadata.
-  The body receives focus with the cursor at the end, including restored drafts.
-- **Super+Shift+I** prefills a Markdown quick note tagged **Note**, titled
-  `Y/M/D Quick Note N`. A fresh body-free index (`exclude=bag,text`) selects
-  the lowest unused positive number for today; after saving, the next summon
-  allocates another. This uses the existing server API, with no server changes.
-  The body is focused immediately; restored quick-note drafts place the cursor
-  at the end so typing appends without changing the generated title.
+You also need:
 
-Direct summons use `{"mode":"today"}` and `{"mode":"quick-note"}`.
-Neither shortcut writes until Save/Ctrl+Enter. Ordinary creation and unsaved
-prepared creations are retained independently; repeating a shortcut restores
-its unsaved draft for that local date. A concurrent title collision stops
-creation rather than overwriting a tiddler. Read-only accounts cannot prepare
-an editable journal/note, and non-text Today attachments are not edited.
-
-### Live Markdown preview
-
-Markdown editing splits the same window into equal left/right panes: the
-entire form on the left and the live preview on the right. There is no
-separate preview window. The preview appears for `text/x-markdown` or
-`text/markdown`, including MIME parameters and case variants. It updates
-200 ms after typing pauses, without moving typing focus out of the editor.
-The preview uses the same trusted local renderer and cached transclusion
-context as the view; preview rendering itself does not access credentials
-or make HTTP requests. Choosing a non-Markdown type hides the preview and
-lets the form use the full width. Preview PageUp/PageDown applies only when
-preview text has focus. Cancelled renders terminate and reap their child.
-Prepared journal/note forms open before a cold full-context index starts loading.
-The initial preview uses any cached context; transclusions may be incomplete
-until the background index arrives, then the preview rerenders without replacing
-the draft. Full-text search still fetches bodies when needed.
-
-## Search and read
-
-Open with Super+Shift+O (replaces Obsidian when the binding below is installed),
-or summon directly:
-
-```sh
-omarchy-shell shell summon rryan.tiddlywiki '{"mode":"search"}'
-```
-
-Results update as you type. Exact titles and prefixes rank first, followed
-by title substrings, acronyms/subsequences, and body-text matches. Every
-query word must match a title or the body; an empty query lists all ordinary
-tiddlers. The prepared index stays only in memory and is reused immediately
-on reopening while a background request refreshes it. Results remain visible
-while typing; a failed refresh keeps cached results searchable.
-
-- **Down/Up** select the next/previous result even with the query focused.
-  Focus stays in the query; ordinary **j/k** remain text input there.
-- **Tab** focuses results, where **j/k** also select the next/previous result.
-- **Enter** opens the selected result from either the query or results.
-- **/** or **Shift+Tab** from the results returns to the query without changing it.
-- Selecting a result replaces the entire search pane with its view.
-- The top-left **Back arrow** or **Escape** restores the query, selection,
-  and results viewport. Escape from search hides the app.
-- **e** or **Edit** in view opens the existing tiddler for editing.
-  Titles are immutable; read-only accounts and non-text attachments cannot edit.
-- **o** opens the viewed tiddler, or the selected result while the list has
-  focus, in the default browser. It remains ordinary text in the query/editor.
-  Browser navigation uses the wiki root and an encoded TiddlyWiki permalink,
-  not the server's per-tiddler HTML route. Browser authentication is separate
-  from this app's API credentials; no credentials are included in the URL.
-
-Editable inputs (query, title, body, tags, and content type) use Emacs-style bindings:
-
-| Keys | Action |
-| --- | --- |
-| Ctrl+A / Ctrl+E | Beginning / end of the current logical line (not Select All) |
-| Ctrl+B / Ctrl+F | Previous / next character |
-| Alt+B / Alt+F | Previous / next word |
-| Ctrl+P / Ctrl+N | Previous / next visual line in the body, retaining the horizontal position; no-op in single-line inputs |
-| Ctrl+H / Ctrl+D | Delete previous / next character |
-| Ctrl+K | Kill to line end, or kill the newline when already at line end |
-| Ctrl+U | Kill from line beginning to the cursor |
-| Ctrl+W / Alt+Backspace | Kill previous word, or the selected region |
-| Alt+D | Kill next word, or the selected region |
-| Ctrl+Y | Yank the latest kill, replacing any selection |
-| Alt+Y | Immediately after yanking, cycle through earlier kills |
-
-The 32-entry kill ring is shared across these inputs and stays in memory until
-the shell restarts; it does not modify the system clipboard. Consecutive kills
-in one input combine, with backward kills prepended. Other keyboard commands
-end the sequence. Character movement/deletion preserves UTF-16 surrogate pairs.
-Word movement treats whitespace and common punctuation as separators.
-Read-only titles still allow movement but cannot be changed by deletion or yank.
-Normal typing, clipboard shortcuts, Tab navigation, query arrows, and Ctrl+Enter
-save remain available. This is text-editing support, not a full Emacs emulator.
-
-The view is selectable and renders only the freshly fetched JSON tiddler body
-locally using pinned TiddlyWiki 5.3.6 core and
-Markdown support. Ordinary transclusions use the cached in-memory index;
-the freshly fetched selected tiddler overrides its cached copy. Titles with
-slashes, spaces, `@`, `%`, or Unicode do not need an HTML route or proxy change.
-Its native header shows the title, a muted author and local date/time
-separated by a dot, and individually spaced tag chips. Metadata and wrapping
-tags scroll with the body, so many tags do not hide the content in a small window.
-
-Static text formatting is retained; scripts, links, images, and embedded
-interactive content are removed. Non-text attachment bodies are not searched
-or displayed as base64; their titles remain searchable. Remote plugin/module
-code and `$:/` system tiddlers are not imported into the local renderer:
-server-specific plugins and system customizations may render differently or
-be unavailable. The trusted body template excludes wiki and tiddler chrome.
-
-Wheel/touchpad distance is amplified in both results and the reader:
-2× pixel deltas and 192 pixels per full wheel notch. No extra animation or
-easing is added; native touch flicks and text selection remain available.
-In the reader, **Down/Up** scroll one line and **Page Down/Page Up** scroll
-one viewport with a one-line overlap. These shortcuts use unmodified keys;
-modified keys retain their normal control behavior.
-Search and read use GET requests only, including for read-only wiki accounts.
-Searching does not discard an unsaved editor draft.
+- Omarchy's Quickshell shell with Qt 6.9 or newer.
+- Python 3, Node.js 18 or newer, and npm.
+- A reachable wiki and an HTTP Basic Authentication account. Use an account with write permission to create or edit notes; read-only accounts can search and read.
+- Markdown support enabled in your wiki if you want Markdown notes to display correctly in the browser.
 
 ## Install
 
-Requires Omarchy's Quickshell shell with Qt 6.9+, Python 3 (standard library
-only), and Node.js 18+ with npm for the local renderer.
+Install missing dependencies on Omarchy:
+
+```sh
+omarchy pkg add python nodejs npm
+```
+
+Install and enable the plugin, then install its dependencies:
 
 ```sh
 omarchy plugin add https://github.com/rryan/omarchy-tiddlywiki.git --enable --yes
-npm --prefix "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/rryan.tiddlywiki" ci \
-  --ignore-scripts --no-audit --no-fund
+(
+  cd "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/rryan.tiddlywiki"
+  npm ci --ignore-scripts --no-audit --no-fund
+)
 ```
 
-The plugin is placed in the right bar section; move it with
-`omarchy bar move rryan.tiddlywiki --section right`.
+The pencil button appears in the right section of the bar. To move it back there later:
 
-Dependencies are pinned in `package-lock.json`; installation does not run
-package scripts. After an update changes the lockfile, rerun `npm ci` in the
-installed plugin directory. Restart the shell to reload updated QML:
-`omarchy restart shell`. A shell restart discards unsaved editor drafts.
-The project `.npmrc` disables dependency command symlinks: Omarchy rejects
-symlinks inside plugin folders, and the renderer loads TiddlyWiki as a library.
-
-Create `~/.config/omarchy/tiddlywiki.json` (or the same path beneath
-`XDG_CONFIG_HOME`) with permissions **0600**:
-
-```json
-{
-  "url": "https://your-wiki.example/self",
-  "username": "your-user",
-  "password": "your-password"
-}
+```sh
+omarchy bar move rryan.tiddlywiki --section right
 ```
 
-Credentials are not stored in the plugin checkout, QML, or command-line
-arguments. Remote URLs must use HTTPS; redirects are refused to avoid
-sending credentials to a different server. The URL is the wiki root,
-without the browser's `#` fragment or embedded credentials.
+### Connect your wiki
 
-For creation, search, journal, and quick-note shortcuts, add these to `~/.config/hypr/bindings.lua`:
+1. **Right-click the bar's pencil button** to open **Settings**. No keyboard shortcuts are required for this.
+2. Enter the **Wiki URL**: your wiki's root address, including any hosting path, for example `https://your-wiki.example/notes`. Do not include a note's `#` fragment, a query string, or credentials in the URL. Use HTTPS for remote wikis; HTTP is allowed only for localhost.
+3. Enter the **Username** and **Password** for your wiki's **HTTP Basic Authentication** account. These are the credentials configured for the Node.js host, not an unrelated wiki login or browser session.
+4. Save the settings. Left-click the pencil to create a note.
+
+An existing password is never displayed. Leave Password blank to keep it when the URL and username are unchanged. Supply a password when switching to a different URL or username.
+
+Changing the connection discards this session's retained drafts after a successful save. If drafts exist, Settings asks you to confirm first. Cancel the confirmation to keep both the drafts and the settings form. A failed settings save leaves your entered values available for correction. Opening or editing Settings does not contact the wiki.
+
+Connection settings are stored separately from the plugin in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/tiddlywiki.json`. Treat this file as private: it contains your account password.
+
+### Optional keyboard shortcuts
+
+These shortcuts are **not installed automatically**. Add the following to `~/.config/hypr/bindings.lua` if you want them. The `O` binding replaces the existing Obsidian shortcut; check for conflicts with your other custom bindings too.
 
 ```lua
 o.bind("SUPER + SHIFT + P", "Create TiddlyWiki tiddler", "omarchy-shell shell summon rryan.tiddlywiki '{}'")
@@ -185,8 +68,18 @@ o.bind("SUPER + SHIFT + T", "Today's TiddlyWiki journal", "omarchy-shell shell s
 o.bind("SUPER + SHIFT + I", "TiddlyWiki quick note", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"quick-note\"}'")
 ```
 
-For a centered floating window wide enough for the editor/preview split,
-use this rule in `~/.config/hypr/hyprland.lua`:
+| Optional shortcut | Opens |
+| --- | --- |
+| Super+Shift+P | New tiddler |
+| Super+Shift+O | Search |
+| Super+Shift+T | Today's journal |
+| Super+Shift+I | Quick note |
+
+Without shortcuts, left-click the pencil to create, or run the corresponding `omarchy-shell shell summon` command above in a terminal to open search, journal, or quick note.
+
+### Optional window rule
+
+For a centered floating window with room for the editor and preview, add this to `~/.config/hypr/hyprland.lua`:
 
 ```lua
 o.window({ class = "^org\\.quickshell$", title = "^TiddlyWiki$" }, {
@@ -196,31 +89,131 @@ o.window({ class = "^org\\.quickshell$", title = "^TiddlyWiki$" }, {
 })
 ```
 
-Then run `hyprctl reload` and `hyprctl configerrors`.
+After changing shortcuts or window rules, apply and check your configuration:
 
-## Save safety
+```sh
+hyprctl reload
+hyprctl configerrors
+```
 
-Creation authenticates through `/status`, checks that the title does not
-exist, and PUTs exactly one tiddler with TiddlyWiki's `X-Requested-With`
-header and `If-None-Match: *`. Existing titles are never intentionally
-overwritten by creation; `$:/` system titles are refused in both modes.
-No delete, bulk write, automatic retry, or background posting.
+## Create, journal, and capture
 
-Editing fetches the current fields again and compares them with the complete
-snapshot opened in the editor before PUT. Already-observed changes or deletion
-stop the save and retain the draft. Unedited custom fields, creator, and
-creation timestamp survive updates. Returning to the view fetches fresh fields;
-reopening a changed tiddler requires confirmation before discarding its retained edit.
-Cancelling a same-tiddler reload resumes the retained edit without rebasing
-it, so copying a draft remains possible without silently overwriting external changes.
+New notes start with a title, body, tags, and an editable content type. The default is Markdown (`text/x-markdown`). Tab moves from title to body, then tags. Separate multi-word tags with double brackets, for example `post [[multi word tag]]`.
 
-TiddlyWiki 5.3.6 does not provide atomic compare-and-swap on these PUT routes.
-A writer between the check and PUT can still be overwritten, or a concurrent
-deletion can be undone by an update. Creation's conditional header may also
-be unenforced. Choose distinct titles and avoid concurrent edits. After any
-ambiguous save failure, check the wiki before retrying.
+**Today's journal** uses your local date as its title, such as `2026/10/5`. It opens that note if it already exists, or prepares a new Markdown note, and adds the **Journal** tag without removing existing tags. The body receives focus, with the cursor at the end.
 
-The wiki needs the Markdown plugin to render `text/x-markdown` posts.
-Save smoke checks used a local server. A desktop-input smoke interaction
-accidentally created one live test tiddler; that exact tiddler was removed
-and its absence confirmed by HTTP 404. No existing posts were modified.
+**Quick note** prepares a Markdown note tagged **Note**, with a title such as `2026/10/5 Quick Note 1`. It chooses the lowest unused positive number for today. After saving, the next quick note gets another available number. The body is focused so you can type immediately.
+
+Opening either mode does not save anything. Reopening a journal or quick-note mode restores its unsaved draft for that date, with the cursor at the end of the body.
+
+### Preview
+
+Markdown notes show the form on the left and a live preview on the right, in the same window. The preview updates shortly after you pause typing without taking focus away from the body. Choosing another content type hides the preview and gives the form the full width. References to other notes may take a moment to appear while the wiki loads.
+
+### Save, back, and drafts
+
+| Action | Result |
+| --- | --- |
+| Save or Ctrl+Enter in a new note, journal, or quick note | Saves successfully, then closes the window |
+| Save or Ctrl+Enter when editing from a note's view | Saves successfully, then returns to that view |
+| Back or Escape in an edit entered from a view | Returns to the view |
+| Back or Escape in a view entered from search | Returns to the previous query, selection, and results position |
+| Back or Escape in a directly opened creation, journal, or quick-note form | Closes the window, including on its loading or error page |
+| Escape in search | Closes the window |
+
+A failed save leaves the form and draft open. Closing a form or switching tasks retains its unsaved draft for this shell session; creation and existing-note drafts are kept separately. Searching does not discard an editor draft. If a note has changed since a retained draft was opened, reloading it asks before replacing that draft.
+
+**Drafts are not saved to your wiki until you choose Save. Restarting or reloading the shell loses unsaved drafts.** Copy important unsaved text somewhere safe before updating or restarting. A confirmed connection change also clears retained drafts.
+
+## Search, read, and edit
+
+Search results update as you type. Exact titles and title prefixes rank first, followed by other title matches and matches in note text. Every query word must match the title or body. An empty query lists ordinary notes. Previously loaded results remain usable while they refresh, including when a refresh fails.
+
+| Where | Key | Action |
+| --- | --- | --- |
+| Search query or results | Down / Up | Select next / previous result |
+| Search query or results | Enter | Open selected result |
+| Search query | Tab | Focus results |
+| Results | j / k | Select next / previous result |
+| Results | / or Shift+Tab | Return to query |
+| Results | o | Open selected note in browser |
+| Note view | e | Edit note |
+| Note view | o | Open note in browser |
+| Note view | Down / Up | Scroll one line |
+| Note view | Page Down / Page Up | Scroll one page |
+
+The view also provides **Edit** and **Back** buttons. Existing titles cannot be renamed here. Read-only accounts and non-text attachments cannot be edited. In text inputs, `j`, `k`, `/`, `e`, and `o` remain ordinary typing rather than navigation commands.
+
+Opening a note with **o** opens the **full wiki** in your default browser. You may need to sign in separately in the browser.
+
+### Emacs-style text editing
+
+The search query and editor text fields support these basics alongside normal typing, clipboard shortcuts, Tab navigation, and Ctrl+Enter to save:
+
+| Keys | Action |
+| --- | --- |
+| Ctrl+A / Ctrl+E | Beginning / end of current line, not Select All |
+| Ctrl+B / Ctrl+F | Previous / next character |
+| Alt+B / Alt+F | Previous / next word |
+| Ctrl+P / Ctrl+N | Previous / next visual line in the body |
+| Ctrl+H / Ctrl+D | Delete previous / next character |
+| Ctrl+K | Kill to line end; kill the newline if already at line end |
+| Ctrl+U | Kill from line beginning to cursor |
+| Ctrl+W / Alt+Backspace | Kill previous word, or selected text |
+| Alt+D | Kill next word, or selected text |
+| Ctrl+Y | Yank the latest kill |
+| Alt+Y | Immediately after a yank, cycle through earlier kills |
+
+Killed text is shared between these inputs for the current shell session, separately from the system clipboard. Ctrl+P/Ctrl+N do nothing in single-line fields. This is convenient text editing, not a full Emacs environment.
+
+## Limitations and save care
+
+- This is a focused note window, not a replacement for the full [TiddlyWiki](https://tiddlywiki.com/) interface. Custom wiki displays, plugins, and interactive content may look different or be unavailable. Use **o** to see the full browser version.
+- Non-text attachments can be found by title, but their contents are not shown or searched. Images and embedded interactive content are not displayed in the native view.
+- System notes are not offered for ordinary search or editing. There is no delete or rename action.
+- Creation refuses a title that already exists. Editing stops if it detects that the note changed or disappeared after you opened it, keeping your draft available.
+- Avoid editing the same note simultaneously elsewhere: changes made at the exact moment of saving can still conflict. If a save reports an uncertain failure, check the wiki before trying again.
+
+## Update
+
+Save your work or copy drafts somewhere safe first: reloading the plugin or shell can lose unsaved drafts.
+
+```sh
+omarchy plugin update rryan.tiddlywiki
+(
+  cd "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/rryan.tiddlywiki"
+  npm ci --ignore-scripts --no-audit --no-fund
+)
+omarchy restart shell
+```
+
+The restart loads the updated plugin and **discards unsaved drafts**. Your saved notes and separate connection settings remain in place.
+
+## Uninstall
+
+1. Save any drafts you want to keep, then remove the plugin:
+
+   ```sh
+   omarchy plugin remove rryan.tiddlywiki
+   ```
+
+2. If you added the optional shortcuts, remove their four `o.bind` lines and the accompanying `hl.unbind("SUPER + SHIFT + O")` from `~/.config/hypr/bindings.lua`. Restore your previous `O` binding if you replaced it. Remove the optional window rule from `~/.config/hypr/hyprland.lua`, then run:
+
+   ```sh
+   hyprctl reload
+   hyprctl configerrors
+   ```
+
+3. Optionally delete the private connection settings if you no longer need them:
+
+   ```sh
+   rm -- "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/tiddlywiki.json"
+   ```
+
+   **This deletes the locally stored wiki URL, username, and password.** Keep them elsewhere if you plan to reinstall. Leaving the file in place retains those private settings.
+
+Uninstalling does **not** remove your wiki, its hosting installation, or any saved tiddlers. Unsaved session drafts are not preserved by uninstalling.
+
+## License
+
+MIT License. See [LICENSE](LICENSE).

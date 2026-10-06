@@ -14,8 +14,11 @@ BarWidget {
         text: "\uf044"
         horizontalMargin: 8
         onPressed: function(mouseButton) {
-            if (mouseButton === Qt.LeftButton && root.bar)
-                root.bar.run("omarchy-shell shell summon rryan.tiddlywiki '{}' ")
+            if (!root.bar) return
+            if (mouseButton === Qt.RightButton)
+                root.bar.run("omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"settings\"}'")
+            else if (mouseButton === Qt.LeftButton)
+                root.bar.run("omarchy-shell shell summon rryan.tiddlywiki '{}'")
         }
     }
 }

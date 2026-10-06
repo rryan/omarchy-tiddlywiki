@@ -23,11 +23,17 @@ Item {
         var payload = {}
         try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) {}
         opened = true
-        if (!editor.saving) {
+        if (!editor.saving && !settings.saving) {
             _editorFromView = false
             cancelPreparation()
             editor.close()
-            if (payload.mode === "search") {
+            settings.close()
+            if (payload.mode === "settings") {
+                search.close()
+                _mode = "settings"
+                settings.hasDrafts = editor.hasRetainedDrafts()
+                settings.open()
+            } else if (payload.mode === "search") {
                 _mode = "search"
                 search.open(payloadJson)
             } else if (payload.mode === "today" || payload.mode === "quick-note") {
@@ -49,6 +55,7 @@ Item {
         opened = false
         search.close()
         editor.close()
+        settings.close()
     }
 
     function dismiss() {
@@ -152,7 +159,7 @@ Item {
                 enabled: !editor.confirmationPending
                 onDismissRequested: root.dismiss()
                 onReaderVisibleChanged: {
-                    if (root.opened && root._mode !== "create" && root._mode !== "edit")
+                    if (root.opened && (root._mode === "search" || root._mode === "view"))
                         root._mode = readerVisible ? "view" : "search"
                 }
                 onEditRequested: function(fields) { root.editTiddler(fields) }
@@ -179,6 +186,17 @@ Item {
                         root._mode = "view"
                         search.openTiddler(title)
                     } else root.dismiss()
+                }
+            }
+            Settings {
+                id: settings
+                anchors.fill: parent
+                visible: root._mode === "settings"
+                onCloseRequested: root.dismiss()
+                onSaved: function(connectionChanged) {
+                    if (connectionChanged) editor.discardRetainedDrafts()
+                    search.resetConnection()
+                    root.dismiss()
                 }
             }
             ColumnLayout {

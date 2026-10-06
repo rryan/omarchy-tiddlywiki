@@ -98,6 +98,16 @@ Item {
         _waitingReadTitle = ""
         clearReader()
     }
+    function resetConnection() {
+        close()
+        _indexReady = false
+        _documents = []
+        clearResults()
+        queryField.clear()
+        _rankedQuery = ""
+        _indexError = ""
+        _wikiUrl = ""
+    }
 
     function dismiss() { dismissRequested() }
 

@@ -52,6 +52,28 @@ Item {
         else if (_preparedKey) _preparedDrafts[_preparedKey] = currentDraft()
         else _createDraft = currentDraft()
     }
+    function hasRetainedDrafts() {
+        return draftKey(_createDraft) !== draftKey(emptyDraft())
+            || (!!_editDraft && draftKey(_editDraft) !== _baseline)
+            || Object.keys(_preparedDrafts).length > 0
+    }
+    function discardRetainedDrafts() {
+        close()
+        _createDraft = emptyDraft()
+        _editDraft = null
+        _preparedDrafts = ({})
+        _original = null
+        _baseline = ""
+        _preparedKey = ""
+        _preparedKind = ""
+        _draftSaved = true
+        titleField.clear()
+        bodyField.clear()
+        tagsField.clear()
+        typeField.editText = "text/x-markdown"
+        message = ""
+        failed = false
+    }
     function showDraft(draft) {
         _draftSaved = false
         titleField.text = draft.title

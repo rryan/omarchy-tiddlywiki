@@ -8,6 +8,8 @@ from html.parser import HTMLParser
 import os
 import re
 import signal
+import stat
+import tempfile
 import subprocess
 import sys
 import urllib.error
@@ -79,17 +81,103 @@ def create(config, draft):
     return {"ok": True, "title": title}
 
 
-def connect(config, write=False):
-    """Return a redirect-refusing authenticated request helper and server status."""
-    base = config["url"].rstrip("/")
-    parts = urllib.parse.urlsplit(base)
+def validate_connection(config, require_password=True):
+    """Validate local connection fields without contacting the wiki."""
+    if not isinstance(config, dict):
+        raise WikiError("Invalid connection settings.")
+    url = config.get("url")
+    username = config.get("username")
+    password = config.get("password", "")
+    if not isinstance(url, str) or not url or any(c.isspace() or ord(c) < 32 for c in url):
+        raise WikiError("Enter a valid wiki URL.")
+    try:
+        parts = urllib.parse.urlsplit(url)
+        parts.port
+    except ValueError:
+        raise WikiError("Enter a valid wiki URL.") from None
     if parts.scheme != "https" and not (
         parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost", "::1")
     ):
         raise WikiError("Use HTTPS for the wiki URL.")
-    if not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+    if not parts.hostname or "@" in parts.netloc or "?" in url or "#" in url or "\\" in url:
         raise WikiError("Configure a plain wiki URL; keep credentials in their separate fields.")
-    auth = base64.b64encode((config["username"] + ":" + config["password"]).encode()).decode()
+    if not isinstance(username, str) or not username or ":" in username or any(ord(c) < 32 for c in username):
+        raise WikiError("Enter a valid HTTP Basic Authentication username.")
+    if not isinstance(password, str) or (require_password and not password):
+        raise WikiError("Enter an HTTP Basic Authentication password.")
+    base = urllib.parse.urlunsplit((parts.scheme, parts.netloc.lower(), parts.path.rstrip("/"), "", ""))
+    return base, username, password
+
+
+def load_settings(path):
+    """Read only regular configuration files, without following symlinks."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None, None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise WikiError("The settings file must be a regular file.")
+        with os.fdopen(fd, encoding="utf-8") as source:
+            fd = None
+            config = json.load(source)
+        validate_connection(config)
+        return config, info
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def settings_read(path):
+    config, _ = load_settings(path)
+    if config is None:
+        return {"ok": True, "url": "", "username": "", "hasPassword": False}
+    url, username, password = validate_connection(config)
+    return {"ok": True, "url": url, "username": username, "hasPassword": bool(password)}
+
+
+def settings_save(path, draft):
+    url, username, password = validate_connection(draft, require_password=False)
+    config, original = load_settings(path)
+    previous = validate_connection(config) if config is not None else None
+    changed = previous is None or (url, username) != previous[:2]
+    if not password:
+        if changed:
+            raise WikiError("Enter a password for the new connection.")
+        password = previous[2]
+    updated = {**(config or {}), "url": url, "username": username, "password": password}
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=".tiddlywiki-", dir=directory)
+        with os.fdopen(fd, "w", encoding="utf-8") as destination:
+            os.fchmod(destination.fileno(), 0o600)
+            json.dump(updated, destination)
+            destination.write("\n")
+            destination.flush()
+            os.fsync(destination.fileno())
+        try:
+            current = os.lstat(path)
+        except FileNotFoundError:
+            current = None
+        if (current is not None and not stat.S_ISREG(current.st_mode)) or (
+            (original is None) != (current is None)
+        ) or (original is not None and (original.st_dev, original.st_ino) != (current.st_dev, current.st_ino)):
+            raise WikiError("The settings file changed; reopen settings before saving.")
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            os.unlink(temporary)
+    return {"ok": True, "connectionChanged": changed}
+
+
+def connect(config, write=False):
+    """Return a redirect-refusing authenticated request helper and server status."""
+    base, username, password = validate_connection(config)
+    auth = base64.b64encode((username + ":" + password).encode()).decode()
     headers = {"Authorization": "Basic " + auth, "Accept": "application/json", "X-Requested-With": "TiddlyWiki"}
     opener = urllib.request.build_opener(NoRedirect())
 
@@ -458,8 +546,8 @@ def _cancel_render(signum, _frame):
 def main():
     action = sys.argv[1] if len(sys.argv) == 2 else "create" if len(sys.argv) == 1 else None
     try:
-        if action not in ("create", "update", "index", "read", "preview", "prepare"):
-            raise WikiError("Use create, update, index, read, preview, or prepare.")
+        if action not in ("create", "update", "index", "read", "preview", "prepare", "settings-read", "settings-save"):
+            raise WikiError("Use create, update, index, read, preview, prepare, settings-read, or settings-save.")
         if action in ("read", "preview"):
             signal.signal(signal.SIGTERM, _cancel_render)
         draft = json.loads(sys.stdin.readline())
@@ -470,9 +558,16 @@ def main():
             result = preview(draft)
         else:
             config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omarchy", "tiddlywiki.json")
-            with open(config_path) as source:
-                config = json.load(source)
-            if action == "index":
+            if action == "settings-read":
+                result = settings_read(config_path)
+            elif action == "settings-save":
+                result = settings_save(config_path, draft)
+            else:
+                with open(config_path) as source:
+                    config = json.load(source)
+            if action in ("settings-read", "settings-save"):
+                pass
+            elif action == "index":
                 result = index(config)
             elif action == "read":
                 result = read_tiddler(config, draft)

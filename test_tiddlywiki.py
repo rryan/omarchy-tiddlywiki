@@ -1,6 +1,9 @@
 import datetime
 import io
 import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -599,6 +602,118 @@ class SanitizerTests(unittest.TestCase):
         self.assertIn("no static text preview", result["html"])
         for excluded in ("base64", "payload", "src=", "<img", "Photo title"):
             self.assertNotIn(excluded, result["html"])
+
+
+class SettingsTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "omarchy" / "tiddlywiki.json"
+
+    def save(self, **changes):
+        return tiddlywiki.settings_save(str(self.path), {**CONFIG, **changes})
+
+    def cli(self, action, value):
+        output = io.StringIO()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": self.directory.name}), \
+             patch("sys.argv", ["tiddlywiki.py", action]), \
+             patch("sys.stdin", io.StringIO(json.dumps(value))), \
+             patch("sys.stdout", output), \
+             patch("tiddlywiki.urllib.request.build_opener") as network, \
+             patch("tiddlywiki.render_locally") as renderer:
+            tiddlywiki.main()
+        network.assert_not_called()
+        renderer.assert_not_called()
+        return json.loads(output.getvalue())
+
+    def test_absent_read_and_secure_roundtrip_do_not_disclose_password(self):
+        self.assertEqual(self.cli("settings-read", {}), {
+            "ok": True, "url": "", "username": "", "hasPassword": False})
+        self.assertFalse(self.path.parent.exists())
+        self.assertEqual(self.cli("settings-save", CONFIG), {"ok": True, "connectionChanged": True})
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.cli("settings-read", {}), {
+            "ok": True, "url": CONFIG["url"], "username": CONFIG["username"], "hasPassword": True})
+        self.assertEqual(json.loads(self.path.read_text()), CONFIG)
+
+    def test_unknown_keys_and_password_retained_only_for_same_connection(self):
+        self.save()
+        config = {**CONFIG, "custom": {"nested": [1, 2]}}
+        self.path.write_text(json.dumps(config))
+        self.assertEqual(self.save(url="https://WIKI.invalid///", password=""),
+                         {"ok": True, "connectionChanged": False})
+        self.assertEqual(json.loads(self.path.read_text()), config)
+        for change in ({"url": "https://other.invalid"}, {"username": "other-user"}):
+            with self.subTest(change=change):
+                before = self.path.read_bytes()
+                with self.assertRaises(tiddlywiki.WikiError):
+                    self.save(password="", **change)
+                self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.save(username="other-user", password="new-secret"),
+                         {"ok": True, "connectionChanged": True})
+
+    def test_invalid_input_and_config_leave_original_bytes_untouched(self):
+        self.save()
+        for changes in (
+            {"url": "http://remote.invalid"}, {"url": "https://user:secret@wiki.invalid"},
+            {"url": "https://wiki.invalid?secret"}, {"url": "https://wiki.invalid#secret"},
+            {"url": "https://wiki.invalid:bad"}, {"url": ["private"]},
+            {"username": "user:secret"}, {"password": None},
+        ):
+            with self.subTest(changes=changes):
+                before = self.path.read_bytes()
+                self.assertFalse(self.cli("settings-save", {**CONFIG, **changes})["ok"])
+                self.assertEqual(self.path.read_bytes(), before)
+        for malformed in ('{"password":"private-secret",', '[]', '{"url":"https://private.invalid"}'):
+            self.path.write_text(malformed)
+            for action in ("settings-read", "settings-save"):
+                result = self.cli(action, CONFIG)
+                self.assertFalse(result["ok"])
+                self.assertNotIn("private", json.dumps(result))
+                self.assertEqual(self.path.read_text(), malformed)
+
+    def test_write_failure_retains_original_and_removes_temporary(self):
+        self.save()
+        before = self.path.read_bytes()
+        for operation in ("os.fsync", "os.replace"):
+            with self.subTest(operation=operation), \
+                 patch("tiddlywiki." + operation, side_effect=OSError("private-secret https://private.invalid")):
+                result = self.cli("settings-save", {**CONFIG, "password": "replacement-secret"})
+            self.assertFalse(result["ok"])
+            self.assertNotIn("private", json.dumps(result))
+            self.assertNotIn("replacement-secret", json.dumps(result))
+            self.assertEqual(self.path.read_bytes(), before)
+            self.assertEqual(list(self.path.parent.iterdir()), [self.path])
+
+    def test_local_http_and_password_replacement_are_supported(self):
+        self.assertEqual(self.save(url="http://localhost:8080/"),
+                         {"ok": True, "connectionChanged": True})
+        self.assertEqual(self.save(url="http://localhost:8080", password="replacement"),
+                         {"ok": True, "connectionChanged": False})
+        self.assertEqual(json.loads(self.path.read_text())["password"], "replacement")
+
+    def test_symlink_and_nonregular_targets_are_not_overwritten(self):
+        self.path.parent.mkdir()
+        target = Path(self.directory.name) / "private.json"
+        target.write_text(json.dumps(CONFIG))
+        self.path.symlink_to(target)
+        for action in ("settings-read", "settings-save"):
+            self.assertFalse(self.cli(action, CONFIG)["ok"])
+        self.assertTrue(self.path.is_symlink())
+        self.assertEqual(json.loads(target.read_text()), CONFIG)
+        self.path.unlink()
+        self.path.mkdir()
+        self.assertFalse(self.cli("settings-save", CONFIG)["ok"])
+        self.assertTrue(self.path.is_dir())
+        self.path.rmdir()
+        os.mkfifo(self.path)
+        self.assertFalse(self.cli("settings-read", {})["ok"])
+        self.assertFalse(self.cli("settings-save", CONFIG)["ok"])
+
+    def test_first_connection_requires_password_and_object_input(self):
+        self.assertFalse(self.cli("settings-save", {**CONFIG, "password": ""})["ok"])
+        self.assertFalse(self.cli("settings-save", [])["ok"])
+        self.assertFalse(self.path.parent.exists())
 
 
 if __name__ == "__main__":
