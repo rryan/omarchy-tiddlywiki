@@ -36,6 +36,12 @@ Item {
             } else if (payload.mode === "search") {
                 _mode = "search"
                 search.open(payloadJson)
+            } else if (payload.mode === "bookmark") {
+                search.back()
+                _mode = "prepare"
+                _prepareError = ""
+                if (!editor.openPrepared(payload.prepared))
+                    _prepareError = "Could not open the saved bookmark for editing."
             } else if (payload.mode === "today" || payload.mode === "quick-note") {
                 prepare(payload.mode)
             } else {

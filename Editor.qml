@@ -30,6 +30,7 @@ Item {
     readonly property bool confirmationPending: !!discardLoader.item && discardLoader.item.visible
     readonly property bool dirty: editing && draftKey(currentDraft()) !== _baseline
     readonly property bool closeAfterSave: !editing || _preparedKind === "today" || _preparedKind === "quick-note"
+        || _preparedKind === "bookmark"
     signal savedTiddler(string title)
     signal closeRequested()
     signal editOpened()
@@ -126,7 +127,7 @@ Item {
         if (restored) {
             // Preserve the editable draft rather than replacing it with server tags.
             var tags = tagsField.text.match(/\[\[[\s\S]*?\]\]|[^\s]+/g) || []
-            var requiredTag = prepared.kind === "today" ? "Journal" : "Note"
+            var requiredTag = {today: "Journal", "quick-note": "Note", bookmark: "Bookmark"}[prepared.kind]
             if (!tags.some(function(tag) { return tag === requiredTag || tag === "[[" + requiredTag + "]]" }))
                 tagsField.text += (tagsField.text && !/\s$/.test(tagsField.text) ? " " : "") + requiredTag
         } else {
@@ -144,7 +145,7 @@ Item {
     }
     function openPrepared(result) {
         if (saving || !result || result.ok !== true || !result.fields
-                || (result.kind !== "today" && result.kind !== "quick-note")
+                || (result.kind !== "today" && result.kind !== "quick-note" && result.kind !== "bookmark")
                 || typeof result.date !== "string" || !Array.isArray(result.tags)
                 || typeof result.fields.title !== "string") return false
         if (result.mode === "edit") return openForEdit(result.fields, result)

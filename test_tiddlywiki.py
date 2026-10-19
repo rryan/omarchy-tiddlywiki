@@ -1,3 +1,4 @@
+import base64
 import datetime
 import io
 import json
@@ -11,6 +12,7 @@ import tiddlywiki
 
 
 CONFIG = {"url": "https://wiki.invalid", "username": "test-user", "password": "test-secret"}
+PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII="
 
 
 class Response(io.BytesIO):
@@ -383,6 +385,52 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual([req.get_method() for req in opener.requests], ["GET", "GET"])
 
 
+class BookmarkTests(unittest.TestCase):
+    def test_bookmark_skips_taken_titles_saves_markdown_and_returns_server_copy_for_editing(self):
+        title = "Bookmark: Page [x] - y (3)"
+        server = {"title": title, "type": "text/x-markdown", "tags": "Bookmark", "revision": "7", "text": "body"}
+        opener = FakeOpener([
+            {"anonymous": False, "username": "ryan"},
+            [{"title": "Bookmark: Page [x] - y"}, {"title": "Bookmark: Page [x] - y (2).png"}],
+            "", "", server,
+        ])
+        capture = lambda: ("Page [[x]] | y", "https://example.com/a?b=1", b"\x89PNG")
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+            result = tiddlywiki.bookmark(CONFIG, capture)
+        image, note = (json.loads(req.data) for req in opener.requests[2:4])
+        self.assertEqual((image["title"], image["type"], image["text"]), (title + ".png", "image/png", "iVBORw=="))
+        self.assertEqual((note["title"], note["type"], note["tags"], note["url"], note["screenshot"]),
+                         (title, "text/x-markdown", ["Bookmark"], "https://example.com/a?b=1", title + ".png"))
+        self.assertEqual(note["text"], "<https://example.com/a?b=1>\n\n"
+                         "![Screenshot](<Bookmark: Page [x] - y (3).png>)\n\n")
+        self.assertTrue(all(req.get_header("If-none-match") == "*" for req in opener.requests[2:4]))
+        self.assertEqual((result["kind"], result["mode"], result["tags"]), ("bookmark", "edit", ["Bookmark"]))
+        self.assertEqual(result["fields"], tiddlywiki.normalize_tiddler(server))
+
+    def test_page_top_skips_tab_strip_toolbar_and_separator(self):
+        width, scale = 8, 2
+        rows = [b"\x0d\x05\x09"] * 80 + [b"\x5e\x24\x42"] * 150 + [b"\x80\x80\x80"] * 2 + [b"\xff\xff\xff"] * 500
+        ppm = b"P6\n%d %d\n255\n" % (width, len(rows)) + b"".join(color * width for color in rows)
+        self.assertEqual(tiddlywiki.page_top(ppm, scale), 232)
+        with self.assertRaises(tiddlywiki.WikiError):
+            tiddlywiki.page_top(b"P6\n8 600\n255\n" + b"\xff" * 8 * 600 * 3, scale)
+
+    def test_history_url_prefers_most_recent_exact_title_across_profiles(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as home:
+            for profile, rows in (("Default", [("https://old", "T", 1), ("https://other", "T2", 9)]),
+                                  ("Profile 1", [("https://new", "T", 5)])):
+                os.makedirs(os.path.join(home, "google-chrome", profile))
+                db = sqlite3.connect(os.path.join(home, "google-chrome", profile, "History"))
+                db.execute("CREATE TABLE urls (url TEXT, title TEXT, last_visit_time INTEGER)")
+                db.executemany("INSERT INTO urls VALUES (?, ?, ?)", rows)
+                db.commit()
+                db.close()
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": home}):
+                self.assertEqual(tiddlywiki.history_url("google-chrome", "T"), "https://new")
+                self.assertIsNone(tiddlywiki.history_url("google-chrome", "Missing"))
+
+
 class UpdateTests(unittest.TestCase):
     def baseline(self):
         return {"title": "Note / café", "text": "Old body", "type": "text/plain",
@@ -590,18 +638,195 @@ class SanitizerTests(unittest.TestCase):
         rendered = tiddlywiki.sanitize_tiddler_html('<div class="tc-tiddler-body"/><p>Outside</p>')
         self.assertEqual(rendered, "")
 
-    def test_nontext_has_no_source_body_and_no_active_preview(self):
+class ImageTests(unittest.TestCase):
+    def test_standalone_image_preserves_bytes_but_is_readonly_and_not_an_edit_body(self):
         opener = FakeOpener([
             {"anonymous": False},
-            {"title": "Photo", "type": "image/png", "text": "base64"},
+            {"title": "Photo", "type": "image/png", "text": PNG, "revision": "12", "custom": "kept"},
         ])
         with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
             result = tiddlywiki.read_tiddler(CONFIG, {"title": "Photo"})
+        self.assertIn('src="data:image/png;base64,' + PNG + '"', result["html"])
         self.assertFalse(result["editable"])
         self.assertEqual(result["tiddler"]["text"], "")
-        self.assertIn("no static text preview", result["html"])
-        for excluded in ("base64", "payload", "src=", "<img", "Photo title"):
-            self.assertNotIn(excluded, result["html"])
+        self.assertEqual(result["tiddler"]["revision"], "12")
+        self.assertEqual(result["tiddler"]["custom"], "kept")
+        self.assertEqual([request.full_url for request in opener.requests], [
+            "https://wiki.invalid/status", "https://wiki.invalid/recipes/default/tiddlers/Photo"])
+
+    def test_nested_wikitext_image_and_transclusion_fetch_only_used_image_once(self):
+        title = "Bookmark: café / %?# screenshot.png"
+        encoded = tiddlywiki.urllib.parse.quote(title, safe="")
+        context = [
+            {"title": "Nested", "text": "[img[" + title + "]]\n\n{{" + title + "}}"},
+            {"title": title, "type": "image/png", "text": ""},
+            {"title": "Unused.png", "type": "image/png", "text": ""},
+        ]
+        opener = FakeOpener([
+            {"anonymous": False, "space": {"recipe": "a/b"}},
+            {"title": "Note", "text": "Before\n\n{{Nested}}\n\nAfter"},
+            {"title": title, "type": "image/png", "text": PNG},
+        ])
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+            result = tiddlywiki.read_tiddler(CONFIG, {"title": "Note", "context": context})
+        self.assertIn("Before", result["html"])
+        self.assertIn("After", result["html"])
+        self.assertEqual(result["html"].count('src="data:image/png;base64,' + PNG + '"'), 2)
+        self.assertEqual([request.full_url for request in opener.requests], [
+            "https://wiki.invalid/status", "https://wiki.invalid/recipes/a%2Fb/tiddlers/Note",
+            "https://wiki.invalid/recipes/a%2Fb/tiddlers/" + encoded])
+        self.assertTrue(all(request.get_method() == "GET" for request in opener.requests))
+        auth = "Basic " + base64.b64encode(b"test-user:test-secret").decode()
+        self.assertTrue(all(request.get_header("Authorization") == auth for request in opener.requests))
+        self.assertEqual(context[1]["text"], "")
+
+    def test_markdown_preview_lazily_loads_config_and_decodes_image_tiddler_titles(self):
+        title = "Bookmark: 日本語 / %?#.png"
+        draft = {
+            "title": "Draft", "type": "text/markdown", "tags": "",
+            "text": "Before\n\n![Screenshot](#" + tiddlywiki.urllib.parse.quote(title, safe="") + ")\n\nAfter",
+            "context": [{"title": title, "type": "image/png", "text": ""},
+                        {"title": "Unrelated.png", "type": "image/png", "text": ""}],
+        }
+        opener = FakeOpener([{"anonymous": False},
+                             {"title": title, "type": "image/png", "text": PNG}])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "omarchy" / "tiddlywiki.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(CONFIG))
+            stdout = io.StringIO()
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": directory}), \
+                    patch("tiddlywiki.urllib.request.build_opener", return_value=opener), \
+                    patch("sys.argv", ["tiddlywiki.py", "preview"]), \
+                    patch("sys.stdin", io.StringIO(json.dumps(draft) + "\n")), \
+                    patch("sys.stdout", stdout):
+                tiddlywiki.main()
+        result = json.loads(stdout.getvalue())
+        self.assertTrue(result["ok"], result)
+        self.assertIn('src="data:image/png;base64,' + PNG + '"', result["html"])
+        self.assertIn("Before", result["html"])
+        self.assertIn("After", result["html"])
+        self.assertEqual([request.full_url for request in opener.requests], [
+            "https://wiki.invalid/status",
+            "https://wiki.invalid/recipes/default/tiddlers/" + tiddlywiki.urllib.parse.quote(title, safe="")])
+        self.assertTrue(all(request.get_method() == "GET" for request in opener.requests))
+
+    def test_bookmark_markdown_bare_destination_fetches_exact_decoded_image_title(self):
+        title = "Bookmark: 日本語 / screenshot %.png"
+        opener = FakeOpener([{"anonymous": False},
+                             {"title": title, "type": "image/png", "text": PNG}])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "omarchy" / "tiddlywiki.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(CONFIG))
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": directory}), \
+                    patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+                result = tiddlywiki.preview({
+                    "title": "Bookmark", "type": "text/markdown", "tags": "",
+                    "text": "Before\n\n![Screenshot](<" + title + ">)\n\nAfter",
+                    "context": [{"title": title, "type": "image/png", "text": ""}],
+                })
+        self.assertIn('src="data:image/png;base64,' + PNG + '"', result["html"])
+        self.assertIn("Before", result["html"])
+        self.assertIn("After", result["html"])
+        self.assertEqual([request.full_url for request in opener.requests], [
+            "https://wiki.invalid/status",
+            "https://wiki.invalid/recipes/default/tiddlers/" + tiddlywiki.urllib.parse.quote(title, safe="")])
+        self.assertTrue(all(request.get_method() == "GET" for request in opener.requests))
+
+    def test_literal_percent_encoded_image_title_wins_over_decoded_title(self):
+        with patch("builtins.open", side_effect=AssertionError("Private config opened")), \
+                patch("tiddlywiki.urllib.request.build_opener", side_effect=AssertionError("HTTP attempted")):
+            result = tiddlywiki.preview({
+                "title": "Draft", "type": "text/markdown", "tags": "",
+                "text": "![Literal percent](<Literal%20Photo>)",
+                "context": [
+                    {"title": "Literal%20Photo", "type": "image/png", "text": PNG},
+                    {"title": "Literal Photo", "type": "image/svg+xml",
+                     "text": '<svg xmlns="http://www.w3.org/2000/svg"><text>Wrong image</text></svg>'},
+                ],
+            })
+        self.assertIn('src="data:image/png;base64,' + PNG + '"', result["html"])
+        self.assertNotIn("data:image/svg+xml", result["html"])
+
+    def test_complete_image_context_previews_without_private_settings_or_http(self):
+        with patch("builtins.open", side_effect=AssertionError("Private config opened")), \
+                patch("tiddlywiki.urllib.request.build_opener", side_effect=AssertionError("HTTP attempted")):
+            result = tiddlywiki.preview({
+                "title": "Draft", "type": "text/markdown", "tags": "", "text": "![Photo](#Photo)",
+                "context": [{"title": "Photo", "type": "image/png", "text": PNG}],
+            })
+        self.assertIn('src="data:image/png;base64,' + PNG + '"', result["html"])
+
+    def test_missing_canonical_and_external_images_do_not_hide_surrounding_note(self):
+        title = "Missing.png"
+        missing = tiddlywiki.urllib.error.HTTPError("https://wiki.invalid", 404, "Missing", {}, None)
+        opener = FakeOpener([
+            {"anonymous": False},
+            {"title": "Note", "text": "Before\n\n[img[Missing.png]]\n\n[img[Canonical]]\n\n"
+                                      "[img[https://remote.invalid/pic.png]]\n\nAfter"},
+            missing,
+        ])
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+            result = tiddlywiki.read_tiddler(CONFIG, {"title": "Note", "context": [
+                {"title": title, "type": "image/png", "text": ""},
+                {"title": "Canonical", "type": "image/png", "text": "",
+                 "_canonical_uri": "file:///private/screenshot.png"},
+            ]})
+        self.assertIn("Before", result["html"])
+        self.assertIn("After", result["html"])
+        self.assertNotIn("<img", result["html"])
+        self.assertNotIn("remote.invalid", result["html"])
+        self.assertNotIn("file:", result["html"])
+        self.assertEqual([request.full_url for request in opener.requests], [
+            "https://wiki.invalid/status", "https://wiki.invalid/recipes/default/tiddlers/Note",
+            "https://wiki.invalid/recipes/default/tiddlers/Missing.png"])
+
+    def test_image_attributes_and_unsafe_sources_cannot_reach_qt(self):
+        rendered = tiddlywiki.sanitize_html(
+            '<img src="data:image/png;base64,' + PNG + '" width="320" height="160" '
+            'alt="&quot;&lt;photo&gt;" onerror="active()" style="background:url(file:///secret)" '
+            'srcset="https://remote.invalid/other" usemap="#map">'
+            '<img src="file:///secret"><img src="https://remote.invalid/pic">'
+            '<img src="data:text/html;base64,PHNjcmlwdD4=">'
+            '<img src="data:image/png;base64,PHNjcmlwdD4=">'
+        )
+        self.assertEqual(rendered, '<img src="data:image/png;base64,' + PNG
+                         + '" width="320" height="160" alt="&quot;&lt;photo&gt;">')
+        for value in ("0", "-1", "100%", "1e12", "infinity"):
+            with self.subTest(dimension=value):
+                markup = '<img src="data:image/png;base64,' + PNG + '" width="' + value + '">'
+                self.assertNotIn("width=", tiddlywiki.sanitize_html(markup))
+
+    def test_svg_standalone_embeds_only_inert_shapes_and_text(self):
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20" viewBox="0 0 40 20">'
+               '<rect width="40" height="20" fill="#fff"/><text x="2" y="10">Visible</text>'
+               '<script>alert(1)</script><image href="https://remote.invalid/secret"/>'
+               '<foreignObject><body>Hidden</body></foreignObject>'
+               '<rect width="2" height="2" fill="url(file:///secret)" onclick="bad()" '
+               'style="background:url(https://remote.invalid)"/></svg>')
+        opener = FakeOpener([{"anonymous": False}, {"title": "Vector", "type": "image/svg+xml", "text": svg}])
+        with patch("tiddlywiki.urllib.request.build_opener", return_value=opener):
+            result = tiddlywiki.read_tiddler(CONFIG, {"title": "Vector"})
+        self.assertFalse(result["editable"])
+        self.assertEqual(result["tiddler"]["text"], "")
+        prefix = 'src="data:image/svg+xml;base64,'
+        self.assertIn(prefix, result["html"])
+        payload = result["html"].split(prefix, 1)[1].split('"', 1)[0]
+        safe = base64.b64decode(payload).decode()
+        self.assertIn("<rect", safe)
+        self.assertIn("Visible", safe)
+        for denied in ("script", "alert", "href", "remote.invalid", "file:", "onclick", "style", "Hidden"):
+            self.assertNotIn(denied, safe)
+
+    def test_svg_entities_are_rejected_instead_of_resolving_resources(self):
+        for svg in ('<!DOCTYPE svg [<!ENTITY value SYSTEM "file:///secret">]>'
+                    '<svg xmlns="http://www.w3.org/2000/svg"><text>&value;</text></svg>',
+                    '<!DOCTYPE svg [<!ENTITY value "expanded">]>'
+                    '<svg xmlns="http://www.w3.org/2000/svg"><text>&value;</text></svg>'):
+            with self.subTest(svg=svg):
+                source = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+                self.assertEqual(tiddlywiki.sanitize_html('<img src="' + source + '">'), "")
 
 
 class SettingsTests(unittest.TestCase):

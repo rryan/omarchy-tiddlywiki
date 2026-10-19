@@ -7,6 +7,8 @@ import html
 from html.parser import HTMLParser
 import os
 import re
+import shutil
+import sqlite3
 import signal
 import stat
 import tempfile
@@ -15,6 +17,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -203,6 +206,21 @@ def is_text_type(content_type):
         "application/json", "application/javascript", "application/xml", "application/x-tiddler"
     ) or (mime.startswith("application/") and mime.endswith(("+json", "+xml")))
 
+IMAGE_TYPES = frozenset(("image/png", "image/jpeg", "image/jpg", "image/gif",
+                         "image/webp", "image/svg+xml"))
+
+
+def image_type(content_type):
+    return content_type.split(";", 1)[0].strip().lower() in IMAGE_TYPES
+
+
+def render_fields(raw):
+    """Keep image bytes only for this render, never in the returned search/edit state."""
+    fields = normalize_tiddler(raw)
+    if image_type(fields["type"]) and isinstance(raw.get("text"), str):
+        fields["text"] = raw["text"]
+    return fields
+
 
 def normalize_tiddler(tiddler):
     if not isinstance(tiddler, dict) or not isinstance(tiddler.get("title"), str):
@@ -334,8 +352,245 @@ def prepare(config, draft):
     return {"ok": True, "kind": kind, "date": date, "mode": mode, "fields": fields, "tags": tags}
 
 
+BROWSER_PROFILES = {
+    "google-chrome": "google-chrome", "chromium": "chromium",
+    "brave-browser": "BraveSoftware/Brave-Browser", "microsoft-edge": "microsoft-edge",
+}
+BROWSER_SUFFIX = re.compile(r" [-–] (Google Chrome|Chromium|Brave|Microsoft\u200b? Edge)$")
+
+
+def run(command, data=None):
+    return subprocess.run(command, input=data, capture_output=True, check=True, timeout=10).stdout
+
+
+def history_url(browser_class, page_title):
+    """Most recently visited URL with this exact title across the browser's profiles."""
+    root = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                        BROWSER_PROFILES.get(browser_class, browser_class))
+    best = None
+    if not os.path.isdir(root):
+        return None
+    with tempfile.TemporaryDirectory() as scratch:
+        for profile in os.listdir(root):
+            history = os.path.join(root, profile, "History")
+            if not os.path.isfile(history):
+                continue
+            copy = os.path.join(scratch, profile.replace(" ", "_"))
+            shutil.copyfile(history, copy)
+            if os.path.isfile(history + "-wal"):
+                shutil.copyfile(history + "-wal", copy + "-wal")
+            try:
+                db = sqlite3.connect(copy)
+                row = db.execute("SELECT url, last_visit_time FROM urls WHERE title = ? "
+                                 "ORDER BY last_visit_time DESC LIMIT 1", (page_title,)).fetchone()
+                db.close()
+            except sqlite3.Error:
+                continue
+            if row and (best is None or row[1] > best[1]):
+                best = row
+    return best[0] if best else None
+
+
+def page_top(ppm, scale):
+    """Physical row where page content starts, below the tab strip, toolbar and bookmark bar.
+
+    Down the window's left edge, Chromium paints a solid tab-strip run, then a solid
+    toolbar run (which includes the bookmark bar), then a thin separator above the page.
+    """
+    # Exactly one whitespace byte separates the header from pixels, which may start with whitespace.
+    header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\s", ppm)
+    if not header:
+        raise WikiError("Unexpected screenshot format.")
+    width, height = int(header[1]), int(header[2])
+    pixels = ppm[header.end():]
+    column = max(1, round(3 * scale))
+    runs = []
+    for row in range(height // 3):
+        offset = (row * width + column) * 3
+        color = pixels[offset:offset + 3]
+        if runs and max(abs(a - b) for a, b in zip(color, runs[-1][0])) <= 6:
+            runs[-1][2] = row
+        else:
+            runs.append([color, row, row])
+    solid = [run for run in runs if run[2] - run[1] >= 10 * scale]
+    if len(solid) < 2 or solid[0][1] > 2 * scale:
+        raise WikiError("Could not find the page area below the browser toolbar.")
+    return solid[1][2] + 1 + round(scale)
+
+
+def address_bar_url(address):
+    """Copy the browser window's address bar, then restore the previous clipboard."""
+    try:
+        types = run(["wl-paste", "--list-types"]).decode().split()
+        kind = types[0] if types else None
+        saved = run(["wl-paste", "--no-newline", "--type", kind]) if kind else None
+    except (subprocess.CalledProcessError, OSError, UnicodeDecodeError):
+        kind = saved = None
+    try:
+        for mods, key in (("CTRL", "L"), ("CTRL", "C"), ("", "Escape")):
+            run(["hyprctl", "dispatch", "hl.dsp.send_shortcut({mods='%s', key='%s', window='address:%s'})"
+                 % (mods, key, address)])
+            subprocess.run(["sleep", "0.15"])
+        url = run(["wl-paste", "--no-newline", "--type", "text/plain"]).decode().strip()
+    except (subprocess.CalledProcessError, OSError, UnicodeDecodeError):
+        url = ""
+    finally:
+        if saved is not None:
+            subprocess.run(["wl-copy", "--type", kind], input=saved)
+    return url if re.match(r"[a-z][a-z0-9+.-]*://\S+$", url) else None
+
+
+def capture_browser():
+    window = json.loads(run(["hyprctl", "activewindow", "-j"]))
+    browser_class = window.get("class", "") if isinstance(window, dict) else ""
+    if browser_class not in BROWSER_PROFILES:
+        raise WikiError("Focus a browser window before bookmarking.")
+    page_title = BROWSER_SUFFIX.sub("", window.get("title", "")).strip()
+    if not page_title:
+        raise WikiError("The browser tab has no title.")
+    (x, y), (w, h) = window["at"], window["size"]
+    # Screenshot before any address-bar fallback, whose omnibox dropdown would cover the page.
+    if window.get("fullscreen") != 2:
+        # Only the page: browser chrome would leak open tabs and bookmarks. (2 = real fullscreen; 1 = maximized.)
+        ppm = run(["grim", "-g", f"{x},{y} {w}x{h}", "-t", "ppm", "-"])
+        scale = int(ppm.split(maxsplit=3)[1]) / w
+        top = -(-page_top(ppm, scale) // scale)
+        y, h = y + int(top), h - int(top)
+    png = run(["grim", "-g", f"{x},{y} {w}x{h}", "-t", "png", "-"])
+    url = history_url(browser_class, page_title) or address_bar_url(window["address"])
+    if not url:
+        raise WikiError("Could not determine the browser tab's URL.")
+    return page_title, url, png
+
+
+def bookmark(config, capture=capture_browser):
+    """Save the focused browser tab as a Markdown Bookmark tiddler plus a PNG screenshot tiddler.
+
+    Returns a prepared edit session for the new bookmark so notes can be added immediately.
+    """
+    page_title, url, png = capture()
+    request, status, recipe = connect(config, write=True)
+    base = "/recipes/" + urllib.parse.quote(recipe, safe="")
+    with request(base + "/tiddlers.json?exclude=bag,text") as response:
+        tiddlers = json.load(response)
+    if not isinstance(tiddlers, list):
+        raise WikiError("The wiki returned an invalid search index.")
+    titles = {normalize_tiddler(tiddler)["title"] for tiddler in tiddlers}
+    stem = "Bookmark: " + page_title.replace("[[", "[").replace("]]", "]").replace("|", "-")
+    title, number = stem, 1
+    while title in titles or title + ".png" in titles:
+        number += 1
+        title = f"{stem} ({number})"
+    image = title + ".png"
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S%f")[:17]
+    user = status.get("username", config["username"])
+    stamp = {"created": now, "modified": now, "creator": user, "modifier": user}
+    # A bare tiddler title as the image destination transcludes the image tiddler in the wiki's
+    # Markdown plugin; percent-encode only titles that can't sit inside <...>.
+    target = f"<{image}>" if not re.search(r"[<>\n]", image) else urllib.parse.quote(image, safe="")
+    text = f"<{url}>\n\n![Screenshot]({target})\n\n"
+    for tiddler in (
+        {"title": image, "type": "image/png", "tags": [], "text": base64.b64encode(png).decode(), **stamp},
+        {"title": title, "type": "text/x-markdown", "tags": ["Bookmark"], "url": url,
+         "screenshot": image, "text": text, **stamp},
+    ):
+        path = base + "/tiddlers/" + urllib.parse.quote(tiddler["title"], safe="")
+        with request(path, "PUT", json.dumps(tiddler, ensure_ascii=False).encode(),
+                     {"Content-Type": "application/json", "If-None-Match": "*"}) as response:
+            if response.status not in (200, 201, 204):
+                raise WikiError("Unexpected save response. Check the wiki before trying again.")
+    # The editor's conflict check compares against the server's copy, revision included.
+    with request(path) as response:
+        fields = normalize_tiddler(json.load(response))
+    if fields["title"] != title:
+        raise WikiError("The wiki returned a different tiddler.")
+    local = datetime.datetime.now()
+    return {"ok": True, "kind": "bookmark", "mode": "edit", "date": f"{local.year}/{local.month}/{local.day}",
+            "title": title, "url": url, "fields": fields, "tags": fields["tags"]}
+
+
+def safe_svg(data):
+    """An inert SVG subset: no styles, links, embedded content, scripts or animation."""
+    if b"<!" in data or b"\x00" in data:
+        return None
+    try:
+        root = ET.fromstring(data)
+    except (ET.ParseError, ValueError):
+        return None
+    namespace = "{http://www.w3.org/2000/svg}"
+    elements = frozenset(("svg", "g", "defs", "path", "rect", "circle", "ellipse",
+                          "line", "polyline", "polygon", "text", "tspan", "title", "desc",
+                          "linearGradient", "radialGradient", "stop", "clipPath"))
+    attributes = frozenset((
+        "id", "viewBox", "preserveAspectRatio", "x", "y", "x1", "y1", "x2", "y2",
+        "cx", "cy", "r", "rx", "ry", "width", "height", "d", "points", "transform",
+        "fill", "fill-rule", "fill-opacity", "stroke", "stroke-width", "stroke-opacity",
+        "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray",
+        "stroke-dashoffset", "opacity", "clip-path", "clip-rule", "clipPathUnits",
+        "gradientUnits", "gradientTransform", "offset", "stop-color", "stop-opacity",
+        "fx", "fy", "fr", "spreadMethod", "font-family", "font-size", "font-weight",
+        "font-style", "text-anchor", "dominant-baseline", "dx", "dy", "rotate",
+    ))
+
+    def local_name(tag):
+        return tag[len(namespace):] if tag.startswith(namespace) else tag
+
+    if local_name(root.tag) != "svg":
+        return None
+
+    def clean(node):
+        node.tag = local_name(node.tag)
+        for name, value in list(node.attrib.items()):
+            if (name not in attributes or ("url" in value.lower()
+                    and not re.fullmatch(r"url\(\s*#[A-Za-z_][\w.-]*\s*\)", value))):
+                del node.attrib[name]
+        for child in list(node):
+            if local_name(child.tag) not in elements:
+                node.remove(child)
+            else:
+                clean(child)
+
+    clean(root)
+    root.set("xmlns", "http://www.w3.org/2000/svg")
+    return ET.tostring(root, encoding="utf-8")
+
+
+def safe_image_source(source):
+    """Canonicalize embedded image bytes; never let Qt resolve an arbitrary URL."""
+    if not isinstance(source, str):
+        return None
+    match = re.fullmatch(r"data:(image/(?:png|jpeg|jpg|gif|webp|svg\+xml))(;base64)?,(.*)",
+                         source, re.DOTALL)
+    if not match:
+        return None
+    mime, encoded, payload = match.groups()
+    try:
+        if encoded:
+            data = base64.b64decode(re.sub(r"\s+", "", payload), validate=True)
+        elif mime == "image/svg+xml":
+            data = urllib.parse.unquote_to_bytes(payload)
+        else:
+            return None
+    except (ValueError, UnicodeError):
+        return None
+    if mime == "image/svg+xml":
+        data = safe_svg(data)
+        if data is None:
+            return None
+    elif not (
+        (mime == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n"))
+        or (mime in ("image/jpeg", "image/jpg") and data.startswith(b"\xff\xd8\xff"))
+        or (mime == "image/gif" and data.startswith((b"GIF87a", b"GIF89a")))
+        or (mime == "image/webp" and data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+    ):
+        return None
+    if mime == "image/jpg":
+        mime = "image/jpeg"
+    return "data:" + mime + ";base64," + base64.b64encode(data).decode("ascii")
+
+
 class StaticRichText(HTMLParser):
-    """Allow only static Qt text formatting, never URLs or server attributes."""
+    """Allow static Qt formatting and inert embedded images, never remote resources."""
     allowed = frozenset((
         "p", "div", "span", "br", "hr", "b", "strong", "i", "em", "u", "s",
         "small", "sub", "sup", "pre", "code", "blockquote", "ul", "ol", "li",
@@ -362,6 +617,18 @@ class StaticRichText(HTMLParser):
         elif tag in self.blocked:
             if tag not in self.void:
                 self.suppressed.append(tag)
+        elif tag == "img":
+            attributes = dict(attrs)
+            source = safe_image_source(attributes.get("src"))
+            if source:
+                safe = ['src="' + source + '"']
+                for name in ("width", "height"):
+                    value = attributes.get(name) or ""
+                    if re.fullmatch(r"(?:[1-9]\d{0,5})(?:\.\d{1,6})?", value):
+                        safe.append(name + '="' + value + '"')
+                if attributes.get("alt"):
+                    safe.append('alt="' + html.escape(attributes["alt"], quote=True) + '"')
+                self.fragments.append("<img " + " ".join(safe) + ">")
         elif tag in self.allowed:
             self.fragments.append("<" + tag + ">")
             if tag not in self.void:
@@ -464,7 +731,7 @@ def sanitize_tiddler_html(markup):
     return parser.result()
 
 
-def render_locally(fields, context):
+def render_once(fields, context):
     renderer = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renderer.js")
     try:
         process = subprocess.run(
@@ -492,7 +759,56 @@ def render_locally(fields, context):
         raise WikiError(error if isinstance(error, str) and error else "Local tiddler rendering failed.")
     if not isinstance(result.get("html"), str):
         raise WikiError("The local tiddler renderer returned an invalid response.")
+    missing = result.get("missingImages", [])
+    if not isinstance(missing, list) or any(not isinstance(title, str) for title in missing):
+        raise WikiError("The local tiddler renderer returned an invalid response.")
+    return result
+
+
+def render_locally(fields, context, load_images=None):
+    result = render_once(fields, context)
+    missing = list(dict.fromkeys(result.get("missingImages", [])))
+    if missing and load_images is not None:
+        images = load_images(missing)
+        if images:
+            # Fetch the whole discovered batch before starting a second engine,
+            # regardless of how many images the note actually uses.
+            result = render_once(fields, context + images)
     return result["html"]
+
+
+def fetch_images(request, recipe, titles):
+    images = []
+    for title in titles:
+        if not title or title.startswith("$:/"):
+            continue
+        path = ("/recipes/" + urllib.parse.quote(recipe, safe="") + "/tiddlers/"
+                + urllib.parse.quote(title, safe=""))
+        try:
+            with request(path) as response:
+                raw = json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            error.close()
+            continue
+        fields = render_fields(raw)
+        if fields["title"] != title:
+            raise WikiError("The wiki returned a different image tiddler.")
+        if image_type(fields["type"]) and not fields.get("_canonical_uri"):
+            images.append(fields)
+    return images
+
+
+def preview_images(titles):
+    # Ordinary previews never reach this function: only a renderer-discovered
+    # missing image can open the private connection settings or contact the wiki.
+    config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                               "omarchy", "tiddlywiki.json")
+    with open(config_path) as source:
+        config = json.load(source)
+    request, _, recipe = connect(config)
+    return fetch_images(request, recipe, titles)
 
 
 def read_tiddler(config, draft):
@@ -505,13 +821,18 @@ def read_tiddler(config, draft):
     encoded = urllib.parse.quote(title, safe="")
     path = "/recipes/" + urllib.parse.quote(recipe, safe="") + "/tiddlers/" + encoded
     with request(path) as response:
-        fields = normalize_tiddler(json.load(response))
+        raw = json.load(response)
+    fields = normalize_tiddler(raw)
     if fields["title"] != title:
         raise WikiError("The wiki returned a different tiddler.")
-    markup = render_locally(fields, draft.get("context", []))
+    markup = render_locally(render_fields(raw), draft.get("context", []),
+                            lambda titles: fetch_images(request, recipe,
+                                                        [item for item in titles if item != title]))
     rendered = sanitize_tiddler_html(markup)
-    if not is_text_type(fields["type"]) and not html.unescape(re.sub(r"<[^>]*>", "", rendered)).strip():
-        rendered = "<p>This non-text tiddler has no static text preview.</p>"
+    if (not is_text_type(fields["type"]) and "<img " not in rendered
+            and not html.unescape(re.sub(r"<[^>]*>", "", rendered)).strip()):
+        rendered = ("<p>This image has no supported embedded preview. External and canonical image URLs are not loaded.</p>"
+                    if image_type(fields["type"]) else "<p>This non-text tiddler has no static text preview.</p>")
     return {"ok": True, "tiddler": fields, "html": rendered,
             "editable": is_text_type(fields["type"]) and not bool(status.get("read_only")),
             "wikiUrl": config["url"].rstrip("/") + "/"}
@@ -535,7 +856,7 @@ def preview(draft):
         while title in titles:
             title += "_"
     fields["title"] = title
-    return {"ok": True, "html": sanitize_tiddler_html(render_locally(fields, context))}
+    return {"ok": True, "html": sanitize_tiddler_html(render_locally(fields, context, preview_images))}
 
 
 def _cancel_render(signum, _frame):
@@ -546,15 +867,17 @@ def _cancel_render(signum, _frame):
 def main():
     action = sys.argv[1] if len(sys.argv) == 2 else "create" if len(sys.argv) == 1 else None
     try:
-        if action not in ("create", "update", "index", "read", "preview", "prepare", "settings-read", "settings-save"):
-            raise WikiError("Use create, update, index, read, preview, prepare, settings-read, or settings-save.")
+        if action not in ("create", "update", "index", "read", "preview", "prepare", "bookmark",
+                          "settings-read", "settings-save"):
+            raise WikiError("Use create, update, index, read, preview, prepare, bookmark, settings-read, or settings-save.")
         if action in ("read", "preview"):
             signal.signal(signal.SIGTERM, _cancel_render)
-        draft = json.loads(sys.stdin.readline())
+        # bookmark runs from a key binding with no stdin payload.
+        draft = {} if action == "bookmark" else json.loads(sys.stdin.readline())
         if not isinstance(draft, dict):
             raise WikiError("Expected a JSON object.")
         if action == "preview":
-            # Offline drafts must never open the private configuration or HTTP.
+            # Only missing image bodies may lazily open private settings/HTTP.
             result = preview(draft)
         else:
             config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omarchy", "tiddlywiki.json")
@@ -575,15 +898,17 @@ def main():
                 result = update(config, draft)
             elif action == "prepare":
                 result = prepare(config, draft)
+            elif action == "bookmark":
+                result = bookmark(config)
             else:
                 result = create(config, draft)
     except urllib.error.HTTPError as error:
         error.close()
         message = "Wiki returned HTTP %s. Check credentials and permissions." % error.code
-        if action in ("create", "update"):
+        if action in ("create", "update", "bookmark"):
             message += " If saving had started, check the wiki before retrying."
         result = {"ok": False, "error": message}
-    except (urllib.error.URLError, TimeoutError, OSError) as error:
+    except (urllib.error.URLError, TimeoutError, OSError, subprocess.SubprocessError) as error:
         message = "Could not complete the request (%s)." % type(error).__name__
         if action in ("create", "update"):
             message += " Draft retained. Check the wiki before retrying a save."
@@ -593,6 +918,12 @@ def main():
     except (ValueError, KeyError, TypeError, AttributeError):
         result = {"ok": False, "error": "Invalid configuration, input, or wiki response."}
     print(json.dumps(result), flush=True)
+    if action == "bookmark":
+        if result["ok"]:
+            subprocess.run(["omarchy-shell", "shell", "summon", "rryan.tiddlywiki",
+                            json.dumps({"mode": "bookmark", "prepared": result})])
+        else:
+            subprocess.run(["notify-send", "TiddlyWiki bookmark", result["error"]])
 
 
 if __name__ == "__main__":

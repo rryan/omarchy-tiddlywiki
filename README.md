@@ -4,6 +4,7 @@ A native Omarchy window for searching, reading, creating, and editing your [Tidd
 
 - Create a tiddler from the bar's pencil button.
 - Search titles and note text, read results, and edit existing notes.
+- View image tiddlers and images embedded in notes, including bookmark screenshots.
 - Open today's journal or capture automatically numbered quick notes.
 - Keep separate unsaved drafts while moving between tasks.
 - Use Emacs-style text editing, or open a note in the full wiki in your browser.
@@ -101,6 +102,7 @@ hl.unbind("SUPER + SHIFT + O") -- Previously Obsidian.
 o.bind("SUPER + SHIFT + O", "Search TiddlyWiki tiddlers", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"search\"}'")
 o.bind("SUPER + SHIFT + T", "Today's TiddlyWiki journal", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"today\"}'")
 o.bind("SUPER + SHIFT + I", "TiddlyWiki quick note", "omarchy-shell shell summon rryan.tiddlywiki '{\"mode\":\"quick-note\"}'")
+o.bind("SUPER + SHIFT + U", "Bookmark browser tab in TiddlyWiki", "python3 " .. os.getenv("HOME") .. "/.config/omarchy/plugins/rryan.tiddlywiki/tiddlywiki.py bookmark")
 ```
 
 | Optional shortcut | Opens |
@@ -109,6 +111,7 @@ o.bind("SUPER + SHIFT + I", "TiddlyWiki quick note", "omarchy-shell shell summon
 | Super+Shift+O | Search |
 | Super+Shift+T | Today's journal |
 | Super+Shift+I | Quick note |
+| Super+Shift+U | Bookmark the focused browser tab |
 
 Without shortcuts, left-click the pencil to create, or run the corresponding `omarchy-shell shell summon` command above in a terminal to open search, journal, or quick note.
 
@@ -140,6 +143,8 @@ New notes start with a title, body, tags, and an editable content type. The defa
 **Quick note** prepares a Markdown note tagged **Note**, with a title such as `2026/10/5 Quick Note 1`. It chooses the lowest unused positive number for today. After saving, the next quick note gets another available number. The body is focused so you can type immediately.
 
 Opening either mode does not save anything. Reopening a journal or quick-note mode restores its unsaved draft for that date, with the cursor at the end of the body.
+
+**Bookmark** (Chrome, Chromium, Brave, or Edge must be focused) saves immediately, then opens the new tiddler in the editor with the cursor at the end of the body so you can add notes. It creates a Markdown tiddler titled `Bookmark: <page title>`, tagged **Bookmark**, with a `url` field, a `screenshot` field, and a body linking the URL and embedding the screenshot. The screenshot is a separate `image/png` tiddler named `Bookmark: <page title>.png`. It is captured with `grim` and cropped to the page, so the tab strip, toolbar, and bookmark bar are left out. Taken titles get a ` (2)`, ` (3)`, … suffix. The URL is looked up in a copy of the browser's history by the tab's exact title, which doesn't touch the browser or clipboard. If the tab isn't in history yet (or is incognito), the plugin copies the address bar instead and then restores the previous clipboard contents. Errors appear as a desktop notification.
 
 ### Preview
 
@@ -181,6 +186,14 @@ The view also provides **Edit** and **Back** buttons. Existing titles cannot be 
 
 Opening a note with **o** opens the **full wiki** in your default browser. You may need to sign in separately in the browser.
 
+### Images
+
+Open an image tiddler from search to view it directly. Images embedded in notes also appear in the reader and live Markdown preview, including screenshots saved with bookmarks. Large images shrink to fit the available width without changing their proportions.
+
+Supported formats are PNG, JPEG, GIF, WebP, and static SVG. For example, embed an image tiddler named `Photo.png` with `[img[Photo.png]]` or `{{Photo.png}}` in Wikitext, or `![Photo](<Photo.png>)` in Markdown. Image titles containing spaces and punctuation are supported.
+
+Image tiddlers are read-only here; use the full wiki to add or replace image files. Remote image URLs and externally stored image tiddlers are not loaded in the native window. SVG displays a safe static subset, without scripts, animation, external resources, or CSS styling. Use **o** to open the full browser version when needed.
+
 ### Emacs-style text editing
 
 The search query and editor text fields support these basics alongside normal typing, clipboard shortcuts, Tab navigation, and Ctrl+Enter to save:
@@ -204,7 +217,7 @@ Killed text is shared between these inputs for the current shell session, separa
 ## Limitations and save care
 
 - This is a focused note window, not a replacement for the full [TiddlyWiki](https://tiddlywiki.com/) interface. Custom wiki displays, plugins, and interactive content may look different or be unavailable. Use **o** to see the full browser version.
-- Non-text attachments can be found by title, but their contents are not shown or searched. Images and embedded interactive content are not displayed in the native view.
+- Non-text attachments can be found by title, but their contents are not searched or edited. Supported image tiddlers can be viewed; other attachments and embedded interactive content are not displayed in the native view.
 - System notes are not offered for ordinary search or editing. There is no delete or rename action.
 - Creation refuses a title that already exists. Editing stops if it detects that the note changed or disappeared after you opened it, keeping your draft available.
 - Avoid editing the same note simultaneously elsewhere: changes made at the exact moment of saving can still conflict. If a save reports an uncertain failure, check the wiki before trying again.
@@ -223,6 +236,8 @@ omarchy restart shell
 ```
 
 The restart loads the updated plugin and **discards unsaved drafts**. Your saved notes and separate connection settings remain in place.
+
+Restart the shell after updating even if the plugin appears to reload automatically. Without the restart, parts of the window can continue using the previous version, including its image display behavior.
 
 ## Uninstall
 

@@ -299,7 +299,7 @@ Item {
                 ? result.tiddler.tags.filter(function(tag) {
                     return typeof tag === "string" && tag.length > 0
                 }) : []
-            // Only the backend's sanitized, image-free Qt RichText is rendered.
+            // Only backend-sanitized Qt RichText and embedded image bytes are rendered.
             _readerHtml = result.html
             _readerLoading = false
             readerScroller.contentY = readerScroller.originY
@@ -680,23 +680,17 @@ Item {
                         visible: !!root._readerMetadata || root._readerTags.length > 0
                         color: Color.menu.border
                     }
-                    TextEdit {
+                    ImageRichText {
                         id: readerText
                         objectName: "tiddlywikiReaderText"
                         width: parent.width
                         height: contentHeight
-                        text: root._readerHtml
-                        textFormat: TextEdit.RichText
-                        readOnly: true
-                        selectByMouse: true
-                        persistentSelection: true
-                        activeFocusOnTab: true
-                        wrapMode: TextEdit.Wrap
+                        html: root._readerHtml
                         color: Color.menu.text
                         selectionColor: Color.menu.selectedBackground
                         selectedTextColor: Color.menu.selectedText
                         font.pixelSize: 16
-                        onCursorPositionChanged: if (activeFocus) readerScroller.ensureCursorVisible()
+                        onCursorPositionChanged: if (activeFocus && !updatingLayout) readerScroller.ensureCursorVisible()
                     }
                 }
             }

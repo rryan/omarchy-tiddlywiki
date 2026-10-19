@@ -157,24 +157,18 @@ Item {
                     if (top < contentY) contentY = wheel.bounded(top)
                     else if (bottom > contentY + height) contentY = wheel.bounded(bottom - height)
                 }
-                TextEdit {
+                ImageRichText {
                     id: previewText
                     objectName: "tiddlywikiPreviewText"
                     width: Math.max(0, scroller.width - 14)
                     height: contentHeight
-                    text: root._html
-                    // The local renderer returns sanitized, image-free, link-free body HTML.
-                    textFormat: TextEdit.RichText
-                    readOnly: true
-                    selectByMouse: true
-                    persistentSelection: true
-                    activeFocusOnTab: true
-                    wrapMode: TextEdit.Wrap
+                    // The local renderer returns sanitized body HTML with embedded images.
+                    html: root._html
                     color: Color.menu.text
                     selectionColor: Color.menu.selectedBackground
                     selectedTextColor: Color.menu.selectedText
                     font.pixelSize: 16
-                    onCursorPositionChanged: if (activeFocus) scroller.ensureCursorVisible()
+                    onCursorPositionChanged: if (activeFocus && !updatingLayout) scroller.ensureCursorVisible()
                     Keys.onPressed: function(event) {
                         if (!activeFocus) return
                         if (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp) {
